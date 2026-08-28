@@ -19,7 +19,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="AI 智能量化投研选股系统", layout="wide", page_icon="🧠")
 st.title("🧠 AI 智能多维量化投研选股系统 (60 / 00 主板)")
-st.caption("全市场主板覆盖 · 两阶段极速流水线 · AI 动态多因子评分 · 专业量价 K 线")
+st.caption("全市场主板覆盖 · 自动剔除涨停板 · 聚焦可买入低吸/蓄势标的 · AI 五维评分")
 
 # 初始化 Session 状态
 if 'scan_results' not in st.session_state:
@@ -43,6 +43,9 @@ with st.sidebar:
     board_type = st.selectbox("市场板块", ["全部主板 (60 + 00)", "仅沪市主板 (60开头)", "仅深市主板 (00开头)"])
     max_price = st.slider("最高股价上限 (元)", min_value=5.0, max_value=100.0, value=20.0, step=1.0)
     
+    st.subheader("🛡️ 交易可买入风控")
+    exclude_limit_up = st.checkbox("🚫 剔除涨停封板股票 (可买入优先)", value=True, help="剔除今日涨幅 ≥ 9.2% 的股票，避免买不进")
+    
     if "AI 多因子" in engine_mode:
         min_score = st.slider("入选基准评分", min_value=50, max_value=95, value=70, step=5)
     else:
@@ -55,7 +58,7 @@ with st.sidebar:
         ])
     elif engine_mode == "🔥 短线游资/爆发战法":
         strategy_choice = st.selectbox("战法选项", [
-            "1. 底部首板启动", "2. 龙头首阴回踩", "3. 弱转强反包", "4. 尾盘抢筹低吸"
+            "1. 龙头首阴回踩 (回踩5日线低吸)", "2. 弱转强反包 (分歧转一致)", "3. 尾盘抢筹低吸 (均线多头套利)"
         ])
     elif engine_mode == "📈 经典均线与波段":
         strategy_choice = st.selectbox("策略选项", [
@@ -66,7 +69,7 @@ with st.sidebar:
 
 # ----------------- 数据源：单次全局拉取并本地过滤 -----------------
 @st.cache_data(ttl=600)
-def get_filtered_stock_pool(b_type: str, price_cap: float):
+def get_filtered_stock_pool(b_type: str, price_cap: float, no_limit: bool):
     try:
         df = ak.stock_zh_a_spot_em()
     except Exception:
@@ -96,12 +99,17 @@ def get_filtered_stock_pool(b_type: str, price_cap: float):
     if '名称' in df.columns:
         df = df[~df['名称'].str.contains("ST|退")]
 
-    # 3. 价格过滤
+    # 3. 价格与涨跌幅过滤
     for col in ['最新价', '涨跌幅', '换手率', '量比']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     df = df[(df['最新价'] <= price_cap) & (df['最新价'] > 0)]
+    
+    # 核心：直接剔除涨停板（>= 9.2%）
+    if no_limit:
+        df = df[df['涨跌幅'] < 9.2]
+        
     return df.reset_index(drop=True)
 
 # ----------------- AI 智能五维多因子评分 -----------------
@@ -146,9 +154,9 @@ def evaluate_smart_score(df: pd.DataFrame) -> tuple[int, list, dict, dict]:
     
     tags = []
     if radar["均线趋势"] >= 15: tags.append("均线多头支撑")
-    if radar["资金量能"] >= 16: tags.append(f"量能活跃({vol_ratio:.1f}倍)")
+    if radar["资金量能"] >= 16: tags.append(f"温和放量({vol_ratio:.1f}倍)")
     if radar["突破动能"] >= 14: tags.append("站稳中长期均线")
-    if close[-1] >= open_p[-1]: tags.append("红盘阳线")
+    if close[-1] >= open_p[-1]: tags.append("红盘小阳线")
     
     resistance = round(float(np.max(high[-30:])), 2)
     support = round(float(min(ma20, low[-1])), 2)
@@ -178,37 +186,35 @@ def check_custom_strategy(df: pd.DataFrame, strat_name: str) -> tuple[bool, str]
     if "均线粘合一阳穿多线" in strat_name:
         ma5, ma10, ma20 = df['收盘'].rolling(5).mean().iloc[-1], df['收盘'].rolling(10).mean().iloc[-1], df['收盘'].rolling(20).mean().iloc[-1]
         is_converge = (max([ma5, ma10, ma20]) - min([ma5, ma10, ma20])) / min([ma5, ma10, ma20]) <= 0.045
-        return (is_converge and close[-1] >= max([ma5, ma10, ma20]) and pct_chg[-1] >= 1.5), "均线高度粘合后放量起爆"
+        return (is_converge and close[-1] >= max([ma5, ma10, ma20]) and 1.5 <= pct_chg[-1] <= 8.5), "均线高度粘合后放量起爆"
     elif "首板次日缩量十字星" in strat_name:
         if len(df) < 15: return False, ""
         yesterday_limit = pct_chg[-2] >= 9.0
         amplitude = (high[-1] - low[-1]) / close[-2] * 100
-        return (yesterday_limit and amplitude <= 6.0 and vol[-1] <= vol[-2] * 0.85), "首板后缩量十字星蓄势"
+        return (yesterday_limit and amplitude <= 6.0 and vol[-1] <= vol[-2] * 0.85 and pct_chg[-1] < 5.0), "首板后缩量十字星蓄势"
     elif "缩量双底红三兵" in strat_name:
         three_yang = all(close[-i] >= open_p[-i] for i in range(1, 4))
-        return (three_yang and close[-1] >= df['收盘'].rolling(20).mean().iloc[-1] * 0.98), "地量连续小阳线回踩企稳"
-    elif "底部首板启动" in strat_name:
-        return (pct_chg[-1] >= 9.0 and vol[-1] >= vol_ma5 * 1.2), "底部放量涨停突破"
+        return (three_yang and close[-1] >= df['收盘'].rolling(20).mean().iloc[-1] * 0.98 and pct_chg[-1] < 7.0), "地量连续小阳线回踩企稳"
     elif "龙头首阴回踩" in strat_name:
         had_limit = (pct_chg[-4:-1] >= 9.0).any()
-        return (had_limit and pct_chg[-1] <= 1.0 and low[-1] >= df['收盘'].rolling(5).mean().iloc[-1] * 0.96), "涨停后首阴踩5日线"
+        return (had_limit and pct_chg[-1] <= 1.0 and low[-1] >= df['收盘'].rolling(5).mean().iloc[-1] * 0.96), "涨停后首阴踩5日线低吸"
     elif "弱转强反包" in strat_name:
-        return (close[-1] >= high[-2] * 0.99 and pct_chg[-1] >= 2.0), "阳线反包昨日高点"
+        return (close[-1] >= high[-2] * 0.99 and 2.0 <= pct_chg[-1] <= 8.5), "阳线反包昨日高点"
     elif "尾盘抢筹低吸" in strat_name:
-        return (1.0 <= pct_chg[-1] <= 7.0 and close[-1] >= open_p[-1] and vol[-1] >= vol_ma5 * 1.1), "尾盘温和放量上攻"
+        return (1.5 <= pct_chg[-1] <= 6.5 and close[-1] >= open_p[-1] and vol[-1] >= vol_ma5 * 1.1), "尾盘温和放量上攻"
     elif "均线多头排列" in strat_name:
         if len(df) < 30: return False, ""
         ma30 = df['收盘'].rolling(30).mean()
-        return (ma30.iloc[-1] >= ma30.iloc[-10] and close[-1] >= df['收盘'].rolling(5).mean().iloc[-1]), "均线稳步向上发散"
+        return (ma30.iloc[-1] >= ma30.iloc[-10] and close[-1] >= df['收盘'].rolling(5).mean().iloc[-1] and pct_chg[-1] < 8.0), "均线稳步向上发散"
     elif "突破60日平台" in strat_name:
         ma60 = df['收盘'].rolling(60).mean().iloc[-1] if len(df) >= 60 else df['收盘'].rolling(20).mean().iloc[-1]
-        return (close[-1] >= ma60 and vol[-1] >= vol_ma5 * 1.1), "放量站上中期均线平台"
+        return (close[-1] >= ma60 and vol[-1] >= vol_ma5 * 1.1 and pct_chg[-1] < 8.5), "放量站上中期均线平台"
     elif "回踩年线支撑" in strat_name:
         if len(df) < 250: return False, ""
         ma250 = df['收盘'].rolling(250).mean().iloc[-1]
-        return (close[-1] >= ma250 * 0.97 and low[-1] <= ma250 * 1.05), "回踩年线支撑位有效"
+        return (close[-1] >= ma250 * 0.97 and low[-1] <= ma250 * 1.05 and pct_chg[-1] < 6.0), "回踩年线支撑位有效"
     elif "放量突破" in strat_name:
-        return (close[-1] > open_p[-1] and vol[-1] >= vol_ma5 * 1.3), "放量收阳突破"
+        return (close[-1] > open_p[-1] and vol[-1] >= vol_ma5 * 1.3 and 2.0 <= pct_chg[-1] <= 8.5), "放量收阳突破"
     return False, ""
 
 # ----------------- 单个股票快速拉取与保护 -----------------
@@ -240,7 +246,6 @@ def fetch_kline_safe(code):
         k_df['涨跌幅'] = k_df['涨跌幅'].fillna(0)
         return k_df
     except Exception:
-        # 备选东财 akshare
         try:
             k_df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
             if k_df is not None and len(k_df) >= 30:
@@ -249,17 +254,23 @@ def fetch_kline_safe(code):
             return None
     return None
 
-def worker_task(code, name, engine_mode, strat_choice, min_score):
+def worker_task(code, name, engine_mode, strat_choice, min_score, exclude_limit):
     k_df = fetch_kline_safe(code)
     if k_df is None: return None
     
     last_close = float(k_df['收盘'].iloc[-1])
+    pct_today = float(k_df['涨跌幅'].iloc[-1])
+    
+    # 二次拦截：剔除涨停
+    if exclude_limit and pct_today >= 9.2:
+        return None
+        
     score, tags, advice, radar = evaluate_smart_score(k_df)
     
     is_hit = False
     reason = ""
     if "AI 多因子" in engine_mode:
-        if score >= min_score:
+        if score >= min_score and 1.5 <= pct_today <= 8.5:
             is_hit = True
             reason = " | ".join(tags) if tags else "多因子综合共振"
     else:
@@ -277,7 +288,7 @@ def worker_task(code, name, engine_mode, strat_choice, min_score):
         "综合评分": score,
         "AI评级": "🔥 强力推荐" if score >= 85 else ("⭐ 重点关注" if score >= 75 else "👀 观察标的"),
         "最新价": last_close,
-        "涨跌幅(%)": round(float(k_df['涨跌幅'].iloc[-1]), 2),
+        "涨跌幅(%)": round(pct_today, 2),
         "量化特征": reason if reason else " | ".join(tags),
         "advice": advice,
         "radar": radar,
@@ -312,30 +323,32 @@ def draw_pro_kline(code, name, k_df, advice):
 # ----------------- 执行按钮 -----------------
 if st.button("🚀 启动智能量化极速扫描", type="primary", use_container_width=True):
     t_start = time.time()
-    with st.spinner(f"正在秒级全景快照 60 / 00 主板 ≤ {max_price} 元标的池..."):
+    with st.spinner(f"正在全景获取 60 / 00 主板 ≤ {max_price} 元未涨停标的池..."):
         try:
-            pool = get_filtered_stock_pool(board_type, max_price)
+            pool = get_filtered_stock_pool(board_type, max_price, exclude_limit_up)
         except Exception as e:
             st.error(f"获取股票池失败：{e}")
             st.stop()
             
     total_count = len(pool)
     if total_count == 0:
-        st.error(f"❌ 未找到符合板块且价格 ≤ {max_price} 元的主板标的。")
+        st.error(f"❌ 未找到符合价格与可买入条件的标的。")
         st.stop()
 
-    # 第一阶段初筛：按日内涨幅与活跃度排序，选取前 60 只候选股执行 K 线深度计算
-    candidates = pool.sort_values(by="涨跌幅", ascending=False).head(60)
+    # 优先选取涨幅在 1.5% ~ 7.5% 之间的强势且可买入标的
+    candidates = pool[(pool['涨跌幅'] >= 1.5) & (pool['涨跌幅'] <= 7.5)].sort_values(by="涨跌幅", ascending=False).head(60)
+    if candidates.empty:
+        candidates = pool.sort_values(by="涨跌幅", ascending=False).head(60)
 
     hit_results = []
     all_scored_results = []
     new_kline_cache = {}
-    progress_bar = st.progress(0, text="正在并发进行 60 日 K 线多维度投研分析...")
+    progress_bar = st.progress(0, text="正在并发深度分析中...")
     
     completed = 0
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [
-            executor.submit(worker_task, str(row['代码']).zfill(6), row['名称'], engine_mode, strategy_choice, min_score)
+            executor.submit(worker_task, str(row['代码']).zfill(6), row['名称'], engine_mode, strategy_choice, min_score, exclude_limit_up)
             for _, row in candidates.iterrows()
         ]
         for future in as_completed(futures):
@@ -358,7 +371,7 @@ if st.button("🚀 启动智能量化极速扫描", type="primary", use_containe
         all_scored_results = sorted(all_scored_results, key=lambda x: x["综合评分"], reverse=True)
         hit_results = all_scored_results[:10]
         for r in hit_results:
-            r["量化特征"] = "💡 [智能保底推荐] 综合评分靠前标的"
+            r["量化特征"] = "💡 [智能保底推荐] 均线多头可买入标的"
             
     hit_results = sorted(hit_results, key=lambda x: (x["综合评分"], x["涨跌幅(%)"]), reverse=True)
     st.session_state['scan_results'] = hit_results
@@ -366,7 +379,7 @@ if st.button("🚀 启动智能量化极速扫描", type="primary", use_containe
     st.session_state['has_scanned'] = True
     
     elapsed = round(time.time() - t_start, 1)
-    st.toast(f"⚡ 投研分析完毕！耗时 {elapsed} 秒", icon="🎉")
+    st.toast(f"⚡ 筛选完毕！耗时 {elapsed} 秒", icon="🎉")
 
 # ----------------- 结果展示与交互区 -----------------
 if st.session_state['scan_results']:
@@ -374,7 +387,7 @@ if st.session_state['scan_results']:
     kline_cache = st.session_state['kline_cache']
     res_df = pd.DataFrame(results)
     
-    st.success(f"🎉 投研完成！共精选呈现 **{len(res_df)}** 只优质标的（按综合量化评分与动能降序排列）。")
+    st.success(f"🎉 投研完成！已剔除无法买入的封板标的，共精选呈现 **{len(res_df)}** 只可买入优质标的。")
     
     col1, col2 = st.columns([1.15, 1.35])
     with col1:
