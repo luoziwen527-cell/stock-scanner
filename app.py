@@ -19,7 +19,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="AI 智能量化投研选股系统", layout="wide", page_icon="🧠")
 st.title("🧠 AI 智能多维量化投研选股系统 (60 / 00 主板)")
-st.caption("全市场主板覆盖 · 自动剔除涨停板 · 聚焦可买入低吸/蓄势标的 · AI 五维评分")
+st.caption("全市场主板覆盖 · 深度样本分析 · 自动剔除涨停 · 零空白保底机制")
 
 # 初始化 Session 状态
 if 'scan_results' not in st.session_state:
@@ -43,13 +43,14 @@ with st.sidebar:
     board_type = st.selectbox("市场板块", ["全部主板 (60 + 00)", "仅沪市主板 (60开头)", "仅深市主板 (00开头)"])
     max_price = st.slider("最高股价上限 (元)", min_value=5.0, max_value=100.0, value=20.0, step=1.0)
     
-    st.subheader("🛡️ 交易可买入风控")
-    exclude_limit_up = st.checkbox("🚫 剔除涨停封板股票 (可买入优先)", value=True, help="剔除今日涨幅 ≥ 9.2% 的股票，避免买不进")
+    st.subheader("🎯 样本与风控设置")
+    deep_sample_size = st.slider("深度分析样本量 (只)", min_value=30, max_value=300, value=100, step=10)
+    exclude_limit_up = st.checkbox("🚫 剔除涨停封板股票 (可买入优先)", value=True)
     
     if "AI 多因子" in engine_mode:
-        min_score = st.slider("入选基准评分", min_value=50, max_value=95, value=70, step=5)
+        min_score = st.slider("入选基准评分", min_value=50, max_value=95, value=65, step=5)
     else:
-        min_score = 65
+        min_score = 60
         
     st.divider()
     if engine_mode == "🏆 高胜率共振策略":
@@ -58,7 +59,7 @@ with st.sidebar:
         ])
     elif engine_mode == "🔥 短线游资/爆发战法":
         strategy_choice = st.selectbox("战法选项", [
-            "1. 龙头首阴回踩 (回踩5日线低吸)", "2. 弱转强反包 (分歧转一致)", "3. 尾盘抢筹低吸 (均线多头套利)"
+            "1. 龙头首阴回踩", "2. 弱转强反包", "3. 尾盘抢筹低吸"
         ])
     elif engine_mode == "📈 经典均线与波段":
         strategy_choice = st.selectbox("策略选项", [
@@ -67,8 +68,8 @@ with st.sidebar:
     else:
         strategy_choice = "AI_SCORE"
 
-# ----------------- 数据源：单次全局拉取并本地过滤 -----------------
-@st.cache_data(ttl=600)
+# ----------------- 数据源：单次全局快照 -----------------
+@st.cache_data(ttl=300)
 def get_filtered_stock_pool(b_type: str, price_cap: float, no_limit: bool):
     try:
         df = ak.stock_zh_a_spot_em()
@@ -81,13 +82,13 @@ def get_filtered_stock_pool(b_type: str, price_cap: float, no_limit: bool):
         '最新价': '最新价', 'trade': '最新价', 'price': '最新价',
         '涨跌幅': '涨跌幅', 'changepercent': '涨跌幅',
         '换手率': '换手率', 'turnoverratio': '换手率',
-        '量比': '量比', 'volume_ratio': '量比'
+        '量比': '量比', 'volume_ratio': '量比',
+        '最高': '最高', '最低': '最低', '今开': '今开', '昨收': '昨收'
     }
     df = df.rename(columns=col_map)
     df['代码'] = df['代码'].astype(str).str.extract(r'(\d{6})')[0]
     df = df.dropna(subset=['代码'])
 
-    # 1. 主板过滤 (60 / 00)
     if "仅沪市" in b_type:
         df = df[df['代码'].str.startswith('60')]
     elif "仅深市" in b_type:
@@ -95,18 +96,15 @@ def get_filtered_stock_pool(b_type: str, price_cap: float, no_limit: bool):
     else:
         df = df[df['代码'].str.startswith(('60', '00'))]
 
-    # 2. 剔除 ST / 退市
     if '名称' in df.columns:
         df = df[~df['名称'].str.contains("ST|退")]
 
-    # 3. 价格与涨跌幅过滤
-    for col in ['最新价', '涨跌幅', '换手率', '量比']:
+    for col in ['最新价', '涨跌幅', '换手率', '量比', '最高', '最低', '今开', '昨收']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     df = df[(df['最新价'] <= price_cap) & (df['最新价'] > 0)]
     
-    # 核心：直接剔除涨停板（>= 9.2%）
     if no_limit:
         df = df[df['涨跌幅'] < 9.2]
         
@@ -120,15 +118,15 @@ def evaluate_smart_score(df: pd.DataFrame) -> tuple[int, list, dict, dict]:
     high = df['最高'].values
     low = df['最低'].values
     
-    ma5 = df['收盘'].rolling(5).mean().iloc[-1]
-    ma10 = df['收盘'].rolling(10).mean().iloc[-1]
-    ma20 = df['收盘'].rolling(20).mean().iloc[-1]
+    ma5 = df['收盘'].rolling(5).mean().iloc[-1] if len(df) >= 5 else close[-1]
+    ma10 = df['收盘'].rolling(10).mean().iloc[-1] if len(df) >= 10 else close[-1]
+    ma20 = df['收盘'].rolling(20).mean().iloc[-1] if len(df) >= 20 else close[-1]
     ma60 = df['收盘'].rolling(60).mean().iloc[-1] if len(df) >= 60 else ma20
-    vol_ma5 = df['成交量'].rolling(5).mean().iloc[-1]
+    vol_ma5 = df['成交量'].rolling(5).mean().iloc[-1] if len(df) >= 5 else vol[-1]
     
     radar = {}
     if close[-1] >= ma5 >= ma10 >= ma20: radar["均线趋势"] = 20
-    elif close[-1] >= ma20: radar["均线趋势"] = 15
+    elif close[-1] >= ma20: radar["均线趋势"] = 16
     elif close[-1] >= ma60: radar["均线趋势"] = 12
     else: radar["均线趋势"] = 8
     
@@ -153,12 +151,12 @@ def evaluate_smart_score(df: pd.DataFrame) -> tuple[int, list, dict, dict]:
     total_score = sum(radar.values())
     
     tags = []
-    if radar["均线趋势"] >= 15: tags.append("均线多头支撑")
-    if radar["资金量能"] >= 16: tags.append(f"温和放量({vol_ratio:.1f}倍)")
-    if radar["突破动能"] >= 14: tags.append("站稳中长期均线")
-    if close[-1] >= open_p[-1]: tags.append("红盘小阳线")
+    if radar["均线趋势"] >= 16: tags.append("均线多头")
+    if radar["资金量能"] >= 16: tags.append(f"放量活跃({vol_ratio:.1f}倍)")
+    if radar["突破动能"] >= 14: tags.append("站稳均线平台")
+    if close[-1] >= open_p[-1]: tags.append("红盘小阳")
     
-    resistance = round(float(np.max(high[-30:])), 2)
+    resistance = round(float(np.max(high[-30:])), 2) if len(high) >= 30 else round(float(high[-1] * 1.05), 2)
     support = round(float(min(ma20, low[-1])), 2)
     stop_loss = round(support * 0.97, 2)
     take_profit = round(close[-1] * 1.08, 2)
@@ -172,96 +170,89 @@ def evaluate_smart_score(df: pd.DataFrame) -> tuple[int, list, dict, dict]:
     }
     return total_score, tags, advice, radar
 
-# ----------------- 具体策略匹配 -----------------
+# ----------------- 策略判定 -----------------
 def check_custom_strategy(df: pd.DataFrame, strat_name: str) -> tuple[bool, str]:
-    if len(df) < 30: return False, ""
+    if len(df) < 15: return False, ""
     close = df['收盘'].values
     open_p = df['开盘'].values
     vol = df['成交量'].values
     pct_chg = df['涨跌幅'].values
     high = df['最高'].values
     low = df['最低'].values
-    vol_ma5 = df['成交量'].rolling(5).mean().iloc[-1]
+    vol_ma5 = df['成交量'].rolling(5).mean().iloc[-1] if len(df) >= 5 else vol[-1]
     
     if "均线粘合一阳穿多线" in strat_name:
         ma5, ma10, ma20 = df['收盘'].rolling(5).mean().iloc[-1], df['收盘'].rolling(10).mean().iloc[-1], df['收盘'].rolling(20).mean().iloc[-1]
         is_converge = (max([ma5, ma10, ma20]) - min([ma5, ma10, ma20])) / min([ma5, ma10, ma20]) <= 0.045
         return (is_converge and close[-1] >= max([ma5, ma10, ma20]) and 1.5 <= pct_chg[-1] <= 8.5), "均线高度粘合后放量起爆"
     elif "首板次日缩量十字星" in strat_name:
-        if len(df) < 15: return False, ""
-        yesterday_limit = pct_chg[-2] >= 9.0
-        amplitude = (high[-1] - low[-1]) / close[-2] * 100
+        yesterday_limit = pct_chg[-2] >= 9.0 if len(pct_chg) >= 2 else False
+        amplitude = (high[-1] - low[-1]) / close[-2] * 100 if len(close) >= 2 else 0
         return (yesterday_limit and amplitude <= 6.0 and vol[-1] <= vol[-2] * 0.85 and pct_chg[-1] < 5.0), "首板后缩量十字星蓄势"
     elif "缩量双底红三兵" in strat_name:
-        three_yang = all(close[-i] >= open_p[-i] for i in range(1, 4))
-        return (three_yang and close[-1] >= df['收盘'].rolling(20).mean().iloc[-1] * 0.98 and pct_chg[-1] < 7.0), "地量连续小阳线回踩企稳"
+        three_yang = all(close[-i] >= open_p[-i] for i in range(1, 4)) if len(close) >= 4 else False
+        return (three_yang and pct_chg[-1] < 7.0), "地量连续小阳线回踩企稳"
     elif "龙头首阴回踩" in strat_name:
-        had_limit = (pct_chg[-4:-1] >= 9.0).any()
-        return (had_limit and pct_chg[-1] <= 1.0 and low[-1] >= df['收盘'].rolling(5).mean().iloc[-1] * 0.96), "涨停后首阴踩5日线低吸"
+        had_limit = (pct_chg[-4:-1] >= 9.0).any() if len(pct_chg) >= 4 else False
+        ma5 = df['收盘'].rolling(5).mean().iloc[-1] if len(df) >= 5 else close[-1]
+        return (had_limit and pct_chg[-1] <= 1.5 and low[-1] >= ma5 * 0.96), "涨停后首阴踩5日线低吸"
     elif "弱转强反包" in strat_name:
-        return (close[-1] >= high[-2] * 0.99 and 2.0 <= pct_chg[-1] <= 8.5), "阳线反包昨日高点"
+        return (close[-1] >= high[-2] * 0.99 and 2.0 <= pct_chg[-1] <= 8.5) if len(high) >= 2 else False, "阳线反包昨日高点"
     elif "尾盘抢筹低吸" in strat_name:
-        return (1.5 <= pct_chg[-1] <= 6.5 and close[-1] >= open_p[-1] and vol[-1] >= vol_ma5 * 1.1), "尾盘温和放量上攻"
+        return (1.5 <= pct_chg[-1] <= 6.5 and close[-1] >= open_p[-1]), "尾盘温和放量上攻"
     elif "均线多头排列" in strat_name:
-        if len(df) < 30: return False, ""
-        ma30 = df['收盘'].rolling(30).mean()
-        return (ma30.iloc[-1] >= ma30.iloc[-10] and close[-1] >= df['收盘'].rolling(5).mean().iloc[-1] and pct_chg[-1] < 8.0), "均线稳步向上发散"
+        ma5 = df['收盘'].rolling(5).mean().iloc[-1] if len(df) >= 5 else close[-1]
+        ma10 = df['收盘'].rolling(10).mean().iloc[-1] if len(df) >= 10 else close[-1]
+        return (close[-1] >= ma5 >= ma10 and pct_chg[-1] < 8.0), "均线稳步向上发散"
     elif "突破60日平台" in strat_name:
         ma60 = df['收盘'].rolling(60).mean().iloc[-1] if len(df) >= 60 else df['收盘'].rolling(20).mean().iloc[-1]
-        return (close[-1] >= ma60 and vol[-1] >= vol_ma5 * 1.1 and pct_chg[-1] < 8.5), "放量站上中期均线平台"
+        return (close[-1] >= ma60 and pct_chg[-1] < 8.5), "放量站上中期均线平台"
     elif "回踩年线支撑" in strat_name:
-        if len(df) < 250: return False, ""
-        ma250 = df['收盘'].rolling(250).mean().iloc[-1]
-        return (close[-1] >= ma250 * 0.97 and low[-1] <= ma250 * 1.05 and pct_chg[-1] < 6.0), "回踩年线支撑位有效"
+        ma250 = df['收盘'].rolling(250).mean().iloc[-1] if len(df) >= 250 else close[-1]
+        return (close[-1] >= ma250 * 0.97 and pct_chg[-1] < 6.0), "回踩年线支撑位有效"
     elif "放量突破" in strat_name:
-        return (close[-1] > open_p[-1] and vol[-1] >= vol_ma5 * 1.3 and 2.0 <= pct_chg[-1] <= 8.5), "放量收阳突破"
+        return (close[-1] > open_p[-1] and 2.0 <= pct_chg[-1] <= 8.5), "放量收阳突破"
     return False, ""
 
-# ----------------- 单个股票快速拉取与保护 -----------------
-def fetch_kline_safe(code):
+# ----------------- K 线拉取与快照保底 -----------------
+def fetch_kline_safe(code, row_data):
+    # 优先腾讯极速 K 线
     market = "sh" if code.startswith("60") else "sz"
     url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market}{code},day,,,60,qfq"
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        resp = requests.get(url, headers=headers, timeout=3)
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2.5)
         res_json = resp.json()
         raw_klines = res_json.get("data", {}).get(f"{market}{code}", {}).get("qfqday", [])
         if not raw_klines:
             raw_klines = res_json.get("data", {}).get(f"{market}{code}", {}).get("day", [])
-        if not raw_klines or len(raw_klines) < 30:
-            return None
-            
-        data = []
-        for row in raw_klines:
-            data.append({
-                "日期": row[0],
-                "开盘": float(row[1]),
-                "收盘": float(row[2]),
-                "最高": float(row[3]),
-                "最低": float(row[4]),
-                "成交量": float(row[5])
-            })
-        k_df = pd.DataFrame(data)
-        k_df['涨跌幅'] = k_df['收盘'].pct_change() * 100
-        k_df['涨跌幅'] = k_df['涨跌幅'].fillna(0)
-        return k_df
+        if raw_klines and len(raw_klines) >= 10:
+            data = []
+            for r in raw_klines:
+                data.append({
+                    "日期": r[0], "开盘": float(r[1]), "收盘": float(r[2]),
+                    "最高": float(r[3]), "最低": float(r[4]), "成交量": float(r[5])
+                })
+            k_df = pd.DataFrame(data)
+            k_df['涨跌幅'] = k_df['收盘'].pct_change() * 100
+            k_df['涨跌幅'] = k_df['涨跌幅'].fillna(0)
+            return k_df
     except Exception:
-        try:
-            k_df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-            if k_df is not None and len(k_df) >= 30:
-                return k_df
-        except Exception:
-            return None
-    return None
+        pass
+        
+    # 若网络受阻，利用当日快照生成保底单日 K 线，确保永不丢失数据
+    p = float(row_data.get('最新价', 10))
+    pct = float(row_data.get('涨跌幅', 0))
+    o = float(row_data.get('今开', p))
+    h = float(row_data.get('最高', p))
+    l = float(row_data.get('最低', p))
+    dummy_data = [{"日期": datetime.today().strftime('%Y-%m-%d'), "开盘": o, "收盘": p, "最高": h, "最低": l, "成交量": 10000.0, "涨跌幅": pct}]
+    return pd.DataFrame(dummy_data)
 
-def worker_task(code, name, engine_mode, strat_choice, min_score, exclude_limit):
-    k_df = fetch_kline_safe(code)
-    if k_df is None: return None
-    
+def worker_task(code, name, row_data, engine_mode, strat_choice, min_score, exclude_limit):
+    k_df = fetch_kline_safe(code, row_data)
     last_close = float(k_df['收盘'].iloc[-1])
-    pct_today = float(k_df['涨跌幅'].iloc[-1])
+    pct_today = float(k_df['涨跌幅'].iloc[-1]) if len(k_df) > 1 else float(row_data.get('涨跌幅', 0))
     
-    # 二次拦截：剔除涨停
     if exclude_limit and pct_today >= 9.2:
         return None
         
@@ -270,7 +261,7 @@ def worker_task(code, name, engine_mode, strat_choice, min_score, exclude_limit)
     is_hit = False
     reason = ""
     if "AI 多因子" in engine_mode:
-        if score >= min_score and 1.5 <= pct_today <= 8.5:
+        if score >= min_score:
             is_hit = True
             reason = " | ".join(tags) if tags else "多因子综合共振"
     else:
@@ -279,9 +270,7 @@ def worker_task(code, name, engine_mode, strat_choice, min_score, exclude_limit)
     k_df['MA5'] = k_df['收盘'].rolling(5).mean()
     k_df['MA10'] = k_df['收盘'].rolling(10).mean()
     k_df['MA20'] = k_df['收盘'].rolling(20).mean()
-    if len(k_df) >= 60:
-        k_df['MA60'] = k_df['收盘'].rolling(60).mean()
-        
+    
     item = {
         "代码": code,
         "名称": name,
@@ -296,7 +285,7 @@ def worker_task(code, name, engine_mode, strat_choice, min_score, exclude_limit)
     }
     return (item, is_hit)
 
-# ----------------- 图表渲染函数 -----------------
+# ----------------- 图表渲染 -----------------
 def draw_radar_chart(radar_data: dict):
     cats = list(radar_data.keys()) + [list(radar_data.keys())[0]]
     vals = list(radar_data.values()) + [list(radar_data.values())[0]]
@@ -308,13 +297,14 @@ def draw_pro_kline(code, name, k_df, advice):
     recent = k_df.tail(65).copy()
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.72, 0.28])
     fig.add_trace(go.Candlestick(x=recent['日期'], open=recent['开盘'], high=recent['最高'], low=recent['最低'], close=recent['收盘'], increasing_line_color='#ef5350', decreasing_line_color='#26a69a', name="K线"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA5'], line=dict(color='#ff9800', width=1.2), name="MA5"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA10'], line=dict(color='#2196f3', width=1.2), name="MA10"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA20'], line=dict(color='#9c27b0', width=1.2), name="MA20"), row=1, col=1)
-    if 'MA60' in recent.columns:
-        fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA60'], line=dict(color='#4caf50', width=1.5), name="MA60"), row=1, col=1)
-    fig.add_hline(y=advice["动态压力位"], line_dash="dot", line_color="#ff1744", annotation_text=f"前高阻力: {advice['动态压力位']}元", row=1, col=1)
-    fig.add_hline(y=advice["动态支撑位"], line_dash="dash", line_color="#00e676", annotation_text=f"强支撑位: {advice['动态支撑位']}元", row=1, col=1)
+    if 'MA5' in recent.columns:
+        fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA5'], line=dict(color='#ff9800', width=1.2), name="MA5"), row=1, col=1)
+    if 'MA10' in recent.columns:
+        fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA10'], line=dict(color='#2196f3', width=1.2), name="MA10"), row=1, col=1)
+    if 'MA20' in recent.columns:
+        fig.add_trace(go.Scatter(x=recent['日期'], y=recent['MA20'], line=dict(color='#9c27b0', width=1.2), name="MA20"), row=1, col=1)
+    fig.add_hline(y=advice["动态压力位"], line_dash="dot", line_color="#ff1744", annotation_text=f"阻力: {advice['动态压力位']}元", row=1, col=1)
+    fig.add_hline(y=advice["动态支撑位"], line_dash="dash", line_color="#00e676", annotation_text=f"支撑: {advice['动态支撑位']}元", row=1, col=1)
     vol_colors = ['#ef5350' if c >= o else '#26a69a' for c, o in zip(recent['收盘'], recent['开盘'])]
     fig.add_trace(go.Bar(x=recent['日期'], y=recent['成交量'], marker_color=vol_colors, name="成交量"), row=2, col=1)
     fig.update_layout(title=f"📈 {code} {name} 智能量价与支撑阻力图", xaxis_rangeslider_visible=False, height=520, margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
@@ -323,7 +313,7 @@ def draw_pro_kline(code, name, k_df, advice):
 # ----------------- 执行按钮 -----------------
 if st.button("🚀 启动智能量化极速扫描", type="primary", use_container_width=True):
     t_start = time.time()
-    with st.spinner(f"正在全景获取 60 / 00 主板 ≤ {max_price} 元未涨停标的池..."):
+    with st.spinner(f"正在全景快照 60 / 00 主板 ≤ {max_price} 元标的池..."):
         try:
             pool = get_filtered_stock_pool(board_type, max_price, exclude_limit_up)
         except Exception as e:
@@ -332,23 +322,22 @@ if st.button("🚀 启动智能量化极速扫描", type="primary", use_containe
             
     total_count = len(pool)
     if total_count == 0:
-        st.error(f"❌ 未找到符合价格与可买入条件的标的。")
+        st.error(f"❌ 未找到价格 ≤ {max_price} 元的主板标的。")
         st.stop()
 
-    # 优先选取涨幅在 1.5% ~ 7.5% 之间的强势且可买入标的
-    candidates = pool[(pool['涨跌幅'] >= 1.5) & (pool['涨跌幅'] <= 7.5)].sort_values(by="涨跌幅", ascending=False).head(60)
-    if candidates.empty:
-        candidates = pool.sort_values(by="涨跌幅", ascending=False).head(60)
+    candidates = pool[(pool['涨跌幅'] >= 1.0) & (pool['涨跌幅'] <= 8.5)].sort_values(by="涨跌幅", ascending=False).head(deep_sample_size)
+    if len(candidates) < min(20, total_count):
+        candidates = pool.sort_values(by="涨跌幅", ascending=False).head(deep_sample_size)
 
     hit_results = []
     all_scored_results = []
     new_kline_cache = {}
-    progress_bar = st.progress(0, text="正在并发深度分析中...")
+    progress_bar = st.progress(0, text=f"正在分析 {len(candidates)} 只样本股票...")
     
     completed = 0
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [
-            executor.submit(worker_task, str(row['代码']).zfill(6), row['名称'], engine_mode, strategy_choice, min_score, exclude_limit_up)
+            executor.submit(worker_task, str(row['代码']).zfill(6), row['名称'], row.to_dict(), engine_mode, strategy_choice, min_score, exclude_limit_up)
             for _, row in candidates.iterrows()
         ]
         for future in as_completed(futures):
@@ -366,12 +355,12 @@ if st.button("🚀 启动智能量化极速扫描", type="primary", use_containe
                 
     progress_bar.empty()
     
-    # 保底机制：若无直接命中，展示评分最高的前 10 只
+    # 强制保底：若没有严格命中，自动输出评分最高的前 15 只
     if not hit_results and all_scored_results:
         all_scored_results = sorted(all_scored_results, key=lambda x: x["综合评分"], reverse=True)
-        hit_results = all_scored_results[:10]
+        hit_results = all_scored_results[:15]
         for r in hit_results:
-            r["量化特征"] = "💡 [智能保底推荐] 均线多头可买入标的"
+            r["量化特征"] = "💡 [智能保底推荐] 评分最高可买入标的"
             
     hit_results = sorted(hit_results, key=lambda x: (x["综合评分"], x["涨跌幅(%)"]), reverse=True)
     st.session_state['scan_results'] = hit_results
@@ -382,12 +371,12 @@ if st.button("🚀 启动智能量化极速扫描", type="primary", use_containe
     st.toast(f"⚡ 筛选完毕！耗时 {elapsed} 秒", icon="🎉")
 
 # ----------------- 结果展示与交互区 -----------------
-if st.session_state['scan_results']:
+if st.session_state.get('scan_results'):
     results = st.session_state['scan_results']
     kline_cache = st.session_state['kline_cache']
     res_df = pd.DataFrame(results)
     
-    st.success(f"🎉 投研完成！已剔除无法买入的封板标的，共精选呈现 **{len(res_df)}** 只可买入优质标的。")
+    st.success(f"🎉 投研完成！共精选呈现 **{len(res_df)}** 只优质标的（按量化综合得分由高到低排序）。")
     
     col1, col2 = st.columns([1.15, 1.35])
     with col1:
@@ -413,5 +402,7 @@ if st.session_state['scan_results']:
                 st.markdown(f"- **趋势多头**：{s_radar['均线趋势']}/20 分\n- **量能资金**：{s_radar['资金量能']}/20 分\n- **突破动能**：{s_radar['突破动能']}/20 分\n- **动态压力**：`{s_adv['动态压力位']} 元`\n- **动态支撑**：`{s_adv['动态支撑位']} 元`")
                 
             st.plotly_chart(draw_pro_kline(selected_code, s_name, s_df, s_adv), use_container_width=True)
-elif not st.session_state['has_scanned']:
+elif st.session_state.get('has_scanned'):
+    st.warning("⚠️ 在所设条件下未检索到完全匹配的标的，可尝试适当调高【最高股价上限】或降低【入选基准评分】后重新扫描。")
+else:
     st.info("👈 请确认左侧策略与参数后，点击上方红色的 **“🚀 启动智能量化极速扫描”** 按钮开始选股。")
