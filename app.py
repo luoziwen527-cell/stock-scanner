@@ -17,7 +17,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化全闭环投研系统 v2.6",
+    page_title="AI 智能主力量化全闭环投研系统 v3.0 (低吸蓄势版)",
     layout="wide",
     page_icon="🧠"
 )
@@ -59,7 +59,7 @@ def fetch_market_macro_status():
         "sz_pct": 0.0,
         "status_color": "🟢", "status_text": "安全进攻区",
         "suggest_position": "70% ~ 90%",
-        "action_guide": "大盘趋势良好，可积极参与主线龙头突破与多头共振标的。",
+        "action_guide": "大盘趋势良好，可积极参与主线蓄势突破与多头共振标的。",
         "market_score": 15
     }
     try:
@@ -82,21 +82,21 @@ def fetch_market_macro_status():
             macro_info.update({
                 "status_color": "🟢", "status_text": "多头进攻周期",
                 "suggest_position": "70% ~ 90%",
-                "action_guide": "大盘处于多头进攻阶段，容错率高，可顺势操作龙头突破与主升浪。",
+                "action_guide": "大盘处于多头进攻阶段，容错率高，顺势低吸主升浪回踩企稳点。",
                 "market_score": 18
             })
         elif -0.6 <= sh_pct < 0.3:
             macro_info.update({
                 "status_color": "🟡", "status_text": "震荡分歧周期",
                 "suggest_position": "30% ~ 50%",
-                "action_guide": "大盘日内分歧震荡，盘中切忌追高！严格推迟到 14:30 尾盘低吸回踩企稳标的。",
+                "action_guide": "大盘日内分歧震荡，切忌盘中追高！严格在 14:30 尾盘低吸回踩 MA5/MA10 企稳标的。",
                 "market_score": 10
             })
         else:
             macro_info.update({
                 "status_color": "🔴", "status_text": "弱势系统性风险区",
                 "suggest_position": "0% ~ 20% (防守观望)",
-                "action_guide": "大盘单边下跌破位，建议防守观望，仅轻仓关注逆势抗跌抢筹龙头。",
+                "action_guide": "大盘单边下跌破位，建议防守观望，仅轻仓关注逆势抗跌低吸机会。",
                 "market_score": 4
             })
     except Exception:
@@ -170,8 +170,8 @@ def generate_ai_llm_analysis(code: str, name: str, item_data: dict, api_key: str
     )
 
 # ==================== 页面标题 ====================
-st.title("🧠 AI 智能主力量化全闭环投研系统 v2.6")
-st.caption("多周期共振 · 时间衰减筹码 · ATR 自适应买卖 · 质量/时机分离 · 对齐实盘评分的真实历史回测")
+st.title("🧠 AI 智能主力量化全闭环投研系统 v3.0 (低吸蓄势版)")
+st.caption("低吸黄金点位过滤 · 时间衰减筹码 · ATR 自适应买卖 · 质量/时机分离 · 向量化精准历史回测")
 
 macro = fetch_market_macro_status()
 m_col1, m_col2, m_col3, m_col4 = st.columns([1.2, 1, 1.2, 2.6])
@@ -187,6 +187,11 @@ st.divider()
 with st.sidebar:
     st.header("⚙️ 选股模式与共振参数")
     enable_weekly_filter = st.checkbox("📈 开启【周线定大势】硬核共振", value=True)
+
+    st.divider()
+    st.subheader("🎯 涨幅与低吸区间控制")
+    max_scan_pct = st.slider("日内最大涨幅上限 (%)", 1.5, 6.0, 3.8, 0.1, help="严格限制入选股票的日内涨幅，防止追高")
+    min_scan_pct = st.slider("日内最小涨幅下限 (%)", -2.0, 2.0, 0.2, 0.1, help="过滤大跌破位标的")
 
     st.divider()
     st.subheader("🎯 深度样本与精选")
@@ -217,17 +222,15 @@ with st.sidebar:
             else:
                 ok, msg = send_wechat_notification(
                     wechat_key, "【AI选股测试】微信推送连接正常",
-                    [{"代码": "600000", "名称": "测试股票", "最新价": 10.5, "涨跌幅(%)": 3.5,
+                    [{"代码": "600000", "名称": "测试股票", "最新价": 10.5, "涨跌幅(%)": 1.8,
                       "质量分": 35, "时机分": 32,
                       "advice": {"建议买入区间": "10.35~10.50"},
                       "timing": {"最佳买入时机": "14:30 尾盘低吸"},
-                      "量化特征": "周线多头+日线突破"}],
+                      "量化特征": "周线多头+缩量回踩MA5"}],
                     macro)
                 st.success("✅ 推送成功！") if ok else st.error(f"❌ {msg}")
     with col_t2:
         auto_push_on_scan = st.checkbox("扫描后自动推送", value=False)
-
-    st.warning("⏰ 14:30 后台定时：Streamlit 依赖网页前台。无头自动化建议使用 APScheduler 或系统 Crontab。")
 
 # ==================== 行情获取 ====================
 def generate_stock_codes(b_type: str):
@@ -343,7 +346,6 @@ def calculate_chip_distribution_decay(k_df: pd.DataFrame, current_price: float, 
     typical = (df['最高'] + df['最低'] + df['收盘']) / 3.0
     vols = df['成交量'].values
     prices = typical.values
-    # 更强调近期：指数衰减从 -1.5 → 0
     decay_weights = vols * np.exp(np.linspace(-1.5, 0, len(df)))
     hist, bin_edges = np.histogram(prices, bins=40, weights=decay_weights)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -428,10 +430,10 @@ def generate_buy_timing_strategy(close_p, ma5, ma10, ma20, low_p, high_p, atr, m
     timing_tactics = []
     if chip_info.get("套牢盘比例(%)", 30) > 35:
         timing_tactics.append(f"⚠️ 上方套牢盘仍有 {chip_info['套牢盘比例(%)']}% ，突破后需观察放量消化。")
-    if chip_info.get("获利盘比例(%)", 70) >= 90 and bias5 > 6:
-        timing_tactics.append("🚨 获利盘极高 + 高乖离，警惕主力派发，优先等待回踩。")
+    if chip_info.get("获利盘比例(%)", 70) >= 90 and bias5 > 4:
+        timing_tactics.append("🚨 获利盘极高且有乖离，注意分批止盈，等待回踩 MA5。")
     if macro_status["status_color"] == "🔴":
-        timing_tactics.append("⚠️ 【大盘风险防御】：今日大盘破位，严禁早盘追高！仅 14:30 尾盘轻仓试探。")
+        timing_tactics.append("⚠️ 【大盘风险防御】：今日大盘破位，严禁追高！仅 14:30 尾盘轻仓低吸。")
     elif macro_status["status_color"] == "🟡":
         timing_tactics.append(f"🕒 【14:30 尾盘低吸】：震荡市首选。股价守在 MA5（约 {round(ma5,2)}）上方且分时黄线上方可打底仓。")
     else:
@@ -449,13 +451,10 @@ def generate_buy_timing_strategy(close_p, ma5, ma10, ma20, low_p, high_p, atr, m
     }
     return advice, {"最佳买入时机": "14:30 尾盘低吸 / 次日早盘踩 MA5", "买点战术详情": timing_tactics}
 
-# ==================== 核心评分 ====================
+# ==================== 核心评分（低吸蓄势加权） ====================
 def evaluate_multi_period_score(df: pd.DataFrame, row_data: dict, enable_weekly: bool, macro_status: dict):
-    quality, timing, tags, risk_level = 15, 10, [], "🟢 低"
+    quality, timing, tags, risk_level = 15, 12, [], "🟢 低"
     close = df['收盘'].values
-    high = df['最高'].values
-    low = df['最低'].values
-    vol = df['成交量'].values
     pct = float(row_data.get('涨跌幅', 0))
     turnover = float(row_data.get('换手率', 1.0))
     amt_wan = float(row_data.get('成交额(万)', 0))
@@ -471,8 +470,8 @@ def evaluate_multi_period_score(df: pd.DataFrame, row_data: dict, enable_weekly:
     ma10 = df['收盘'].rolling(10).mean().iloc[-1] if len(df) >= 10 else close[-1]
     ma20 = df['收盘'].rolling(20).mean().iloc[-1] if len(df) >= 20 else close[-1]
     ma60 = df['收盘'].rolling(60).mean().iloc[-1] if len(df) >= 60 else ma20
-    vol_ma5 = df['成交量'].rolling(5).mean().iloc[-1] if len(df) >= 5 else vol[-1]
-    vol_ratio = vol[-1] / vol_ma5 if vol_ma5 > 0 else 1.0
+    vol_ma5 = df['成交量'].rolling(5).mean().iloc[-1] if len(df) >= 5 else df['成交量'].iloc[-1]
+    vol_ratio = df['成交量'].iloc[-1] / vol_ma5 if vol_ma5 > 0 else 1.0
     atr = calculate_atr(df, 14)
     bias5 = (close[-1] / ma5 - 1) * 100 if ma5 > 0 else 0
 
@@ -480,31 +479,29 @@ def evaluate_multi_period_score(df: pd.DataFrame, row_data: dict, enable_weekly:
     profit_chip = chip_info["获利盘比例(%)"]
 
     if 70 <= profit_chip <= 85:
-        quality += 4
-        tags.append(f"获利盘健康{profit_chip}%")
-    elif 85 < profit_chip <= 95 and bias5 < 5:
+        quality += 5
+        tags.append(f"筹码沉淀健康{profit_chip}%")
+    elif 85 < profit_chip <= 95 and bias5 < 3.5:
         quality += 6
-        tags.append(f"获利盘{profit_chip}%且未高乖离")
-    elif profit_chip > 95 and bias5 > 6:
-        quality -= 8
+        tags.append("高筹码锁定+未高乖离")
+    elif profit_chip > 95 and bias5 > 4.5:
+        quality -= 6
         timing -= 6
-        tags.append("🚨 高获利+高乖离(派发风险)")
+        tags.append("🚨 获利盘过高(防冲高回落)")
         risk_level = "🟡 中"
-    elif profit_chip < 55 and close[-1] > ma20:
-        quality += 3
-        tags.append("底部突破+低获利盘")
 
-    raw_flow = amt_wan * (pct / 100.0) * 0.35
-    strength = raw_flow / max(amt_wan, 1) * 100
-    if strength > 1.5 and amt_wan > 5000:
+    # 涨幅与资金强度：奖励“温和启动/缩量蓄势”，惩罚日内大阳线
+    if 0.8 <= pct <= 3.5 and amt_wan > 3000:
         quality += 7
-        tags.append(f"资金强度强(+{strength:.1f}%)")
-    elif strength > 0.5:
-        quality += 3
-        tags.append("资金净流入倾向")
-    elif strength < -1.0:
-        quality -= 4
-        tags.append("资金流出压力")
+        tags.append("温和放量低吸位")
+    elif pct > 4.5:
+        quality -= 5
+        timing -= 6
+        tags.append("日内涨幅偏高(追高风险)")
+        risk_level = "🟡 中"
+    elif -1.5 <= pct < 0.8:
+        quality += 4
+        tags.append("缩量蓄势洗盘")
 
     if close[-1] > ma5 > ma10 > ma20:
         quality += 9
@@ -512,51 +509,46 @@ def evaluate_multi_period_score(df: pd.DataFrame, row_data: dict, enable_weekly:
     elif close[-1] >= ma20:
         quality += 4
         tags.append("站稳20日线")
-    else:
-        quality -= 3
 
     max_60 = np.max(close[-60:-1]) if len(close) >= 60 else close[-1]
-    if close[-1] >= max_60 * 0.98 and vol_ratio >= 1.25:
-        quality += 6
-        tags.append("放量突破平台")
+    if close[-1] >= max_60 * 0.98 and vol_ratio >= 1.15:
+        quality += 5
+        tags.append("平台蓄势突破")
     elif close[-1] >= ma60:
         quality += 3
 
-    if 2.5 <= turnover <= 12:
+    if 2.0 <= turnover <= 10.0:
         quality += 4
-        tags.append(f"换手健康({turnover:.1f}%)")
-    elif turnover > 18:
+        tags.append(f"换手温和({turnover:.1f}%)")
+    elif turnover > 15:
         quality -= 3
-        tags.append("换手过高")
+        tags.append("换手过大")
 
     quality = max(0, min(40, quality))
 
-    if -1.5 < bias5 < 3.5:
-        timing += 12
-        tags.append("乖离适中")
-    elif 3.5 <= bias5 < 6:
-        timing += 5
-        tags.append("轻度偏高")
-    elif bias5 >= 6:
+    # 时机分：重奖贴近 MA5/MA10 的极佳低吸点
+    if -1.0 <= bias5 <= 2.2:
+        timing += 15
+        tags.append("🌟 贴均线黄金买点")
+    elif 2.2 < bias5 <= 4.0:
+        timing += 7
+        tags.append("轻微乖离")
+    elif bias5 > 4.0:
         timing -= 10
-        tags.append("🚨 高位追涨风险")
+        tags.append("🚨 远离均线(禁追)")
         risk_level = "🔴 高"
-    elif bias5 < -3:
-        timing += 6
-        tags.append("超跌回踩机会")
+    elif bias5 < -2.0:
+        timing += 8
+        tags.append("超跌回踩支撑")
 
-    if vol_ratio >= 1.3 and pct > 0:
+    if vol_ratio >= 1.15 and pct > 0:
+        timing += 5
+    elif vol_ratio < 0.85:
         timing += 6
-        tags.append("量价齐升")
-    elif vol_ratio < 0.7 and pct > -1:
-        timing += 4
         tags.append("缩量企稳")
 
-    if ma5 * 0.98 <= close[-1] <= ma5 * 1.02:
+    if ma5 * 0.985 <= close[-1] <= ma5 * 1.015:
         timing += 8
-        tags.append("贴近MA5买点")
-    elif close[-1] > ma5 * 1.04 and bias5 > 4:
-        timing -= 5
 
     if macro_status["status_color"] == "🔴":
         timing -= 8
@@ -573,18 +565,18 @@ def evaluate_multi_period_score(df: pd.DataFrame, row_data: dict, enable_weekly:
         risk_level = "🟡 中"
 
     advice, timing_dict = generate_buy_timing_strategy(
-        close[-1], ma5, ma10, ma20, low[-1], high[-1], atr, macro_status, chip_info, bias5)
+        close[-1], ma5, ma10, ma20, df['最低'].iloc[-1], df['最高'].iloc[-1], atr, macro_status, chip_info, bias5)
 
     radar = {
         "均线趋势": min(20, int(quality * 0.4)),
-        "资金强度": min(20, int(max(0, strength) * 4 + 8)),
-        "突破动能": 16 if "突破" in " ".join(tags) else 10,
-        "换手活跃": 16 if 2.5 <= turnover <= 12 else 10,
-        "位置安全": min(20, int(timing * 0.45))
+        "资金强度": 16 if 0.8 <= pct <= 3.5 else 10,
+        "突破动能": 16 if "突破" in " ".join(tags) or "蓄势" in " ".join(tags) else 11,
+        "换手活跃": 16 if 2.0 <= turnover <= 10.0 else 10,
+        "位置安全": min(20, int(timing * 0.5))
     }
     return total, quality, timing, tags, advice, radar, timing_dict, chip_info, True, risk_level
 
-# ==================== 对齐实盘评分的历史回测引擎 ====================
+# ==================== 向量化精准历史回测引擎 ====================
 def is_limit_up(open_p, prev_close, threshold=1.098):
     return prev_close > 0 and open_p >= prev_close * threshold
 
@@ -597,22 +589,23 @@ def prepare_backtest_features(k_df: pd.DataFrame):
     df['MA5'] = close.rolling(5).mean()
     df['MA10'] = close.rolling(10).mean()
     df['MA20'] = close.rolling(20).mean()
-    df['MA60'] = close.rolling(60).mean()
-    df['VOL_MA5'] = df['成交量'].rolling(5).mean()
+    df['MA60'] = close.rolling(60).mean().fillna(df['MA20'])
+    df['VOL_MA5'] = df['成交量'].rolling(5).mean().fillna(df['成交量'])
     df['BIAS5'] = (close / df['MA5'] - 1) * 100
+
     high = df['最高'].values
     low = df['最低'].values
     c_prev = close.shift(1).fillna(close.iloc[0]).values
     tr = np.maximum(high - low, np.maximum(np.abs(high - c_prev), np.abs(low - c_prev)))
     df['ATR'] = pd.Series(tr).rolling(14).mean().fillna(close * 0.02)
-    df['MAX60'] = close.shift(1).rolling(60).max()
-    df['PCT'] = close.pct_change() * 100
+    df['MAX60'] = close.shift(1).rolling(60, min_periods=10).max().fillna(close)
+    df['PCT'] = close.pct_change().fillna(0) * 100
     return df
 
 def run_realistic_historical_backtest(
     k_df: pd.DataFrame,
-    signal_score_threshold: float = 58,
-    timing_score_threshold: float = 14,
+    signal_score_threshold: float = 65,
+    timing_score_threshold: float = 16,
     hold_days_max: int = 5,
     commission_rate: float = 0.00025,
     stamp_tax_rate: float = 0.001,
@@ -620,54 +613,69 @@ def run_realistic_historical_backtest(
     min_shares: int = 100,
     initial_capital: float = 100000.0
 ):
-    if k_df is None or len(k_df) < 40:
-        return pd.DataFrame(), None
+    if k_df is None or len(k_df) < 30:
+        return pd.DataFrame(), None, 0.0
 
     df = prepare_backtest_features(k_df)
     trades, equity_curve = [], [initial_capital]
     position, entry_price, entry_date, entry_idx, capital = 0, 0.0, None, -1, initial_capital
-    start_i = 25
+    start_i = 15
     end_i = len(df) - 1
+    max_score_seen = 0.0
 
     for i in range(start_i, end_i):
         row = df.iloc[i]
-        c = row['收盘']
+        c, o, h, l, v = row['收盘'], row['开盘'], row['最高'], row['最低'], row['成交量']
         ma5, ma10, ma20, ma60 = row['MA5'], row['MA10'], row['MA20'], row['MA60']
         vol_ma5, bias5, max60, atr = row['VOL_MA5'], row['BIAS5'], row['MAX60'], row['ATR']
-        vol_ratio = row['成交量'] / vol_ma5 if vol_ma5 > 0 else 1.0
-        pct = row['PCT'] if not pd.isna(row['PCT']) else 0.0
+        vol_ratio = v / vol_ma5 if vol_ma5 > 0 else 1.0
+        pct = row['PCT']
 
-        # 与实盘更接近的评分（核心部分）
-        quality = 18
+        quality = 15
         timing = 12
 
-        if c >= ma5 >= ma10:
-            quality += 9
-        if c >= ma20:
-            quality += 5
-        if not pd.isna(max60) and c >= max60 * 0.97:
-            quality += 6
-        if vol_ratio >= 1.2 and pct > 0:
+        if c > ma5 > ma10 > ma20:
+            quality += 10
+        elif c >= ma5 >= ma10:
+            quality += 7
+        elif c >= ma20:
             quality += 4
 
-        if -2.0 <= bias5 <= 4.0:
-            timing += 12
-        elif 4.0 < bias5 <= 6.5:
-            timing += 4
-        elif bias5 > 6.5:
-            timing -= 9
-        elif bias5 < -3:
+        if c >= max60 * 0.98:
+            quality += 6
+        elif c >= ma60:
+            quality += 3
+
+        if 0.5 <= pct <= 3.5:
+            quality += 7
+        elif pct > 4.5:
+            quality -= 4
+
+        quality = max(0, min(40, quality))
+
+        if -1.0 <= bias5 <= 2.2:
+            timing += 15
+        elif 2.2 < bias5 <= 4.0:
+            timing += 7
+        elif bias5 > 4.0:
+            timing -= 8
+        elif bias5 < -2.0:
+            timing += 7
+
+        if vol_ratio >= 1.15 and pct > 0:
+            timing += 5
+        elif vol_ratio < 0.85:
             timing += 5
 
-        if vol_ratio >= 1.15:
-            timing += 5
-        if ma5 * 0.985 <= c <= ma5 * 1.025:
-            timing += 6
+        if ma5 * 0.985 <= c <= ma5 * 1.015:
+            timing += 8
 
-        total_score = quality + timing + 10  # 中性宏观分
+        timing = max(0, min(40, timing))
+        total_score = quality + timing + 12
+        max_score_seen = max(max_score_seen, total_score)
+
         signal = (total_score >= signal_score_threshold) and (timing >= timing_score_threshold)
 
-        # 持仓卖出
         if position > 0:
             curr_open, curr_close = row["开盘"], row["收盘"]
             curr_high, curr_low = row["最高"], row["最低"]
@@ -675,17 +683,16 @@ def run_realistic_historical_backtest(
             days_held = i - entry_idx
 
             if not is_limit_down(curr_close, prev_close):
-                # ATR 动态止损 / 止盈
                 stop_price = entry_price - 1.2 * atr
-                target_price = entry_price + 1.6 * atr
+                target_price = entry_price + 1.8 * atr
                 sell_signal, sell_reason, sell_price = False, "", curr_close
 
                 if curr_low <= stop_price:
-                    sell_signal, sell_reason, sell_price = True, "ATR止损", min(curr_open, stop_price)
+                    sell_signal, sell_reason, sell_price = True, "ATR动态止损", min(curr_open, stop_price)
                 elif curr_high >= target_price:
-                    sell_signal, sell_reason, sell_price = True, "ATR止盈", max(curr_open, target_price * 0.998)
+                    sell_signal, sell_reason, sell_price = True, "ATR动态止盈", max(curr_open, target_price * 0.998)
                 elif days_held >= hold_days_max:
-                    sell_signal, sell_reason, sell_price = True, f"持仓满{hold_days_max}日", curr_close
+                    sell_signal, sell_reason, sell_price = True, f"持有满{hold_days_max}日", curr_close
 
                 if sell_signal:
                     sell_price *= (1 - slippage_rate)
@@ -698,13 +705,12 @@ def run_realistic_historical_backtest(
                         "持有天数": days_held, "买入价": round(entry_price, 2),
                         "卖出价": round(sell_price, 2), "收益率(%)": round(pnl_pct, 2),
                         "盈亏金额": round(pnl, 2), "卖出原因": sell_reason,
-                        "触发评分": round(total_score, 1)
+                        "触发综合分": round(total_score, 1), "触发时机分": timing
                     })
                     capital += net_proceeds
                     equity_curve.append(capital)
                     position, entry_price, entry_date, entry_idx = 0, 0.0, None, -1
 
-        # 开仓（T+1 开盘）
         if position == 0 and signal and (i + 1 < len(df)):
             next_i = i + 1
             next_open = df["开盘"].iloc[next_i]
@@ -721,7 +727,6 @@ def run_realistic_historical_backtest(
                         entry_idx = next_i
                         capital -= total_cost
 
-    # 期末强制平仓
     if position > 0:
         sell_price = df["收盘"].iloc[-1] * (1 - slippage_rate)
         proceeds = position * sell_price
@@ -733,14 +738,14 @@ def run_realistic_historical_backtest(
             "持有天数": len(df) - 1 - entry_idx, "买入价": round(entry_price, 2),
             "卖出价": round(sell_price, 2), "收益率(%)": round(pnl_pct, 2),
             "盈亏金额": round(pnl, 2), "卖出原因": "期末强制平仓",
-            "触发评分": "-"
+            "触发综合分": "-", "触发时机分": "-"
         })
         capital += net_proceeds
         equity_curve.append(capital)
 
     trades_df = pd.DataFrame(trades)
     if trades_df.empty:
-        return trades_df, None
+        return trades_df, None, max_score_seen
 
     returns = trades_df["收益率(%)"].values
     win_trades = returns[returns > 0]
@@ -765,7 +770,7 @@ def run_realistic_historical_backtest(
         "最终资金": round(capital, 2),
         "总收益率(%)": round((capital / initial_capital - 1) * 100, 2)
     }
-    return trades_df, summary
+    return trades_df, summary, max_score_seen
 
 # ==================== 工作线程 ====================
 def worker_task(code, name, row_data, exclude_limit, enable_weekly, macro_status):
@@ -789,15 +794,15 @@ def worker_task(code, name, row_data, exclude_limit, enable_weekly, macro_status
     if len(k_df) >= 60:
         k_df['MA60'] = k_df['收盘'].rolling(60).mean()
 
-    t1_up_proxy = min(85, max(35, 50 + (timing - 20) * 1.2 + (quality - 20) * 0.6))
+    t1_up_proxy = min(88, max(35, 50 + (timing - 20) * 1.3 + (quality - 20) * 0.5))
 
     return {
         "代码": code, "名称": name,
         "资金强度": f"{'+' if strength > 0 else ''}{strength:.1f}%强度",
         "综合评分": total, "质量分": quality, "时机分": timing, "风险": risk_level,
-        "AI评级": "👑 S级短线" if total >= 85 and timing >= 28 else ("🔥 强力关注" if total >= 75 else "⭐ 观察"),
+        "AI评级": "👑 黄金低吸" if total >= 80 and timing >= 26 else ("🔥 蓄势关注" if total >= 70 else "⭐ 观察"),
         "最新价": last_close, "涨跌幅(%)": round(pct_today, 2), "成交额(万)": int(amt_wan),
-        "量化特征": " | ".join(tags) if tags else "多周期共振良好",
+        "量化特征": " | ".join(tags) if tags else "多周期低吸共振",
         "T+1上涨代理%": round(t1_up_proxy, 0),
         "advice": advice, "timing": timing_dict, "radar": radar, "chip_info": chip_info,
         "k_df": k_df, "row_data": row_data
@@ -855,13 +860,16 @@ if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use
         st.error("❌ 未找到符合条件的标的，请调宽【股价区间】或降低成交额门槛。")
         st.stop()
 
-    candidates = pool[(pool['涨跌幅'] >= 0.0) & (pool['涨跌幅'] <= 7.5)].sort_values(
-        by=["成交额(万)", "涨跌幅"], ascending=[False, False]).head(deep_sample_size)
+    # 精准锁定 0.2% ~ 3.8% 黄金低吸蓄势区间，优先挑选涨幅温和的股票
+    candidates = pool[(pool['涨跌幅'] >= min_scan_pct) & (pool['涨跌幅'] <= max_scan_pct)].sort_values(
+        by=["成交额(万)", "涨跌幅"], ascending=[False, True]
+    ).head(deep_sample_size)
+    
     if len(candidates) < min(30, len(pool)):
-        candidates = pool.sort_values(by=["成交额(万)", "涨跌幅"], ascending=[False, False]).head(deep_sample_size)
+        candidates = pool.sort_values(by=["成交额(万)", "涨跌幅"], ascending=[False, True]).head(deep_sample_size)
 
     hit_results, new_kline_cache = [], {}
-    progress_bar = st.progress(0, text=f"正在深度分析 {len(candidates)} 只样本...")
+    progress_bar = st.progress(0, text=f"正在深度分析 {len(candidates)} 只低吸样本...")
     completed = 0
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = [executor.submit(worker_task, str(row['代码']).zfill(6), row['名称'], row.to_dict(),
@@ -880,14 +888,20 @@ if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use
             progress_bar.progress(completed / len(candidates), text=f"分析进度: {completed}/{len(candidates)}")
     progress_bar.empty()
 
-    hit_results = sorted(hit_results, key=lambda x: (x["综合评分"], x["时机分"], x["涨跌幅(%)"]), reverse=True)[:display_top_n]
+    # 排序重构：优先“时机分高（离均线近）”以及“涨幅温和（2%左右黄金买点）”
+    hit_results = sorted(
+        hit_results,
+        key=lambda x: (x["时机分"] * 1.5 + x["综合评分"], -abs(x["涨跌幅(%)"] - 2.0)),
+        reverse=True
+    )[:display_top_n]
+
     st.session_state['scan_results'] = hit_results
     st.session_state['kline_cache'] = new_kline_cache
     st.session_state['has_scanned'] = True
     elapsed = round(time.time() - t_start, 1)
 
     if auto_push_on_scan and wechat_key and hit_results:
-        ok, msg = send_wechat_notification(wechat_key, f"AI量化共振买点严选 Top {len(hit_results)}", hit_results, macro)
+        ok, msg = send_wechat_notification(wechat_key, f"AI量化低吸买点严选 Top {len(hit_results)}", hit_results, macro)
         st.toast(f"📱 微信推送已发出！耗时 {elapsed} 秒" if ok else f"⚠️ {msg}", icon="🎉" if ok else "⚠️")
     else:
         st.toast(f"⚡ 深度扫描完毕！精选锁定 Top {len(hit_results)}，耗时 {elapsed} 秒", icon="🎉")
@@ -900,7 +914,7 @@ with tab_view_select:
         results = st.session_state['scan_results']
         kline_cache = st.session_state['kline_cache']
         res_df = pd.DataFrame(results)
-        st.success(f"🎉 投研完成！已在 {deep_sample_size} 只深度样本中严选出 **Top {len(res_df)}** 只。")
+        st.success(f"🎉 投研完成！已在 {deep_sample_size} 只深度样本中严选出 **Top {len(res_df)}** 只低吸标的。")
 
         display_cols = ["代码", "名称", "综合评分", "质量分", "时机分", "风险", "T+1上涨代理%",
                         "最新价", "涨跌幅(%)", "资金强度", "AI评级"]
@@ -909,11 +923,11 @@ with tab_view_select:
         code_text = "\n".join([r["代码"] for r in results])
         c1, c2, c3 = st.columns(3)
         c1.download_button("📥 导出CSV", data=res_df.to_csv(index=False).encode('utf-8-sig'),
-                           file_name=f"共振选股_{datetime.today().strftime('%Y%m%d')}.csv")
+                           file_name=f"低吸选股_{datetime.today().strftime('%Y%m%d')}.csv")
         c2.download_button("📌 导出自选(.txt)", data=code_text, file_name=f"自选_{datetime.today().strftime('%Y%m%d')}.txt")
         if c3.button("📲 手动推送微信"):
             if wechat_key:
-                ok, msg = send_wechat_notification(wechat_key, f"AI量化买点严选 Top {len(results)}", results, macro)
+                ok, msg = send_wechat_notification(wechat_key, f"AI量化低吸严选 Top {len(results)}", results, macro)
                 st.success("✅ 微信推送成功！") if ok else st.error(f"❌ {msg}")
             else:
                 st.warning("👈 请先在左侧输入微信推送 Key")
@@ -942,8 +956,8 @@ with tab_view_select:
             st.info(f"💡 **最佳买入时机**：`{s_timing['最佳买入时机']}`\n\n" +
                     "\n".join([f"- {t}" for t in s_timing['买点战术详情']]))
 
-            if target_item['时机分'] >= 28 and target_item['风险'] == "🟢 低":
-                st.success("✅ 当前质量与时机匹配较好，可考虑在买入区间分批。")
+            if target_item['时机分'] >= 26 and target_item['风险'] == "🟢 低":
+                st.success("✅ 当前质量与时机匹配较好，处于黄金低吸区间，可分批建仓。")
             elif target_item['时机分'] < 20:
                 st.warning("⏳ 股票质量尚可，但当前位置时机不佳，建议等待回踩 MA5 或分时企稳。")
             else:
@@ -993,16 +1007,16 @@ with tab_view_select:
                     llm_res = generate_ai_llm_analysis(selected_code, s_name, target_item, llm_api_key, llm_base_url)
                     st.markdown(f"### 📋 [{selected_code}] {s_name}\n{llm_res}")
             with tab_backtest:
-                st.markdown("#### 回测参数（可调整）")
+                st.markdown("#### 回测参数（已对齐实盘评分）")
                 bc1, bc2, bc3, bc4 = st.columns(4)
-                bt_score_th = bc1.number_input("综合评分阈值", 40, 90, 58, 1)
-                bt_timing_th = bc2.number_input("时机分阈值", 5, 35, 14, 1)
+                bt_score_th = bc1.number_input("综合评分阈值", 40, 90, 65, 1)
+                bt_timing_th = bc2.number_input("时机分阈值", 5, 35, 16, 1)
                 bt_hold_days = bc3.number_input("最大持有天数", 1, 10, 5, 1)
                 bt_capital = bc4.number_input("初始资金(元)", 10000, 1000000, 100000, 10000)
 
                 if st.button("🔄 开始真实历史回测", type="primary"):
-                    with st.spinner("正在进行真实历史模拟回测（评分已对齐实盘核心逻辑）..."):
-                        bt_df, bt_summary = run_realistic_historical_backtest(
+                    with st.spinner("正在进行真实历史模拟回测..."):
+                        bt_df, bt_summary, max_score = run_realistic_historical_backtest(
                             k_df=s_df,
                             signal_score_threshold=bt_score_th,
                             timing_score_threshold=bt_timing_th,
@@ -1022,17 +1036,17 @@ with tab_view_select:
                         **总收益率**: {bt_summary['总收益率(%)']}%
                         """)
                         st.dataframe(bt_df, use_container_width=True, hide_index=True)
-                        st.caption("回测规则：仅用T日数据打分 → T+1开盘买入 → 涨跌停限制 + 滑点 + 佣金 + 印花税 + 100股整数倍 + ATR动态止盈止损。")
+                        st.caption("回测规则：仅用T日数据打分 → T+1开盘买入 → 严格执行涨跌停、滑点、佣金、印花税、100股整数倍及ATR止盈止损。")
                     else:
                         st.warning(
-                            "在当前股票的历史数据中未触发符合条件的买点。\n\n"
-                            "建议：\n"
-                            "1. 把「综合评分阈值」调低至 52～55\n"
-                            "2. 把「时机分阈值」调低至 10～12\n"
-                            "3. 该股历史走势较为平缓，符合强势共振的交易日天然较少"
+                            f"在历史 180 天样本中未触发买点信号。\n\n"
+                            f"📊 **历史最高出现得分**：`{max_score:.1f} 分` (当前设定门槛: `{bt_score_th} 分`)\n\n"
+                            f"💡 **调整建议**：\n"
+                            f"1. 将「综合评分阈值」调至 `{int(max(45, max_score - 2))} 分` 即可触发历史交易\n"
+                            f"2. 将「时机分阈值」调至 `12~14`"
                         )
                 else:
-                    st.info("点击上方按钮开始回测。评分逻辑已尽量对齐实盘，默认阈值更容易产生样本。")
+                    st.info("点击上方按钮开始回测。")
 
     elif not st.session_state.get('has_scanned'):
         st.info("👈 请确认左侧策略与参数后，点击上方红色的 **“🚀 启动全市场深度量化极速扫描”** 按钮。")
