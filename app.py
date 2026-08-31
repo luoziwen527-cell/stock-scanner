@@ -17,7 +17,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化全闭环投研系统 v5.2",
+    page_title="AI 智能主力量化全闭环投研系统 v5.3",
     layout="wide",
     page_icon="🧠"
 )
@@ -254,8 +254,7 @@ def fetch_kline_safe(code, row_data, days=90):
             return k_df
     except Exception:
         pass
-    
-    # 模拟合成近期平稳数据做兜底，保证绝对不抛出 None
+
     p = float(row_data.get('最新价', 10))
     mock_dates = pd.date_range(end=datetime.today(), periods=30).strftime('%Y-%m-%d').tolist()
     mock_data = [{"日期": d, "开盘": p * 0.99, "收盘": p, "最高": p * 1.01, "最低": p * 0.98, "成交量": 15000.0, "涨跌幅": 0.5} for d in mock_dates]
@@ -289,7 +288,7 @@ def calculate_chip_distribution_decay(k_df: pd.DataFrame, current_price: float, 
         "距筹码峰(%)": round((current_price - chip_peak) / chip_peak * 100, 2)
     }
 
-# ==================== 策略 2：主力逻辑博弈与龙头/底部洗盘低吸 (视频理念) ====================
+# ==================== 策略 2：主力逻辑博弈与龙头/底部洗盘低吸 ====================
 def evaluate_strategy_main_force_game(df: pd.DataFrame, row_data: dict, enable_weekly: bool, enable_fundamental: bool, macro_status: dict):
     quality, timing, tags = 15, 15, []
     close = df['收盘'].values
@@ -298,7 +297,7 @@ def evaluate_strategy_main_force_game(df: pd.DataFrame, row_data: dict, enable_w
     opens = df['开盘'].values
     vols = df['成交量'].values
     n = len(df)
-    
+
     pct = float(row_data.get('涨跌幅', 0))
     pb = float(row_data.get('PB', 0))
 
@@ -347,7 +346,7 @@ def evaluate_strategy_main_force_game(df: pd.DataFrame, row_data: dict, enable_w
             quality += 16
             tags.append(f"🌀 均线粘合蓄势({spread:.1f}%)")
 
-    # 默认兜底放行
+    # 默认兜底
     if not (pattern_a_hit or pattern_b_hit or pattern_c_hit):
         quality += 10
         tags.append("主力温和蓄势")
@@ -363,6 +362,20 @@ def evaluate_strategy_main_force_game(df: pd.DataFrame, row_data: dict, enable_w
     stop_loss_logic = round(logic_base_price * 0.96, 2)
     target_p = round(max(max_p_25d, close[-1] * 1.15), 2)
 
+    # 智能判定买入时段与所属轨道
+    if pattern_a_hit or pattern_b_hit:
+        timing_slot = "🌅 早盘低吸 (9:40-10:15)"
+        style_tag = "🔥 强势进攻轨"
+        timing_detail_text = "🌅 【早盘低吸】：强势股急跌洗盘，早盘关注缩量下探主力防守线后的放量企稳信号。"
+    elif pattern_c_hit:
+        timing_slot = "🌇 尾盘确认 (14:30-14:50)"
+        style_tag = "🛡️ 稳健防守轨"
+        timing_detail_text = "🌇 【尾盘买入】：均线粘合蓄势，全天不破位、尾盘缩量走平即可锁定确定性建仓。"
+    else:
+        timing_slot = "🌇 尾盘确认 (14:30-14:50)"
+        style_tag = "🛡️ 稳健防守轨"
+        timing_detail_text = "🌇 【尾盘买入】：温和蓄势标的，建议尾盘确认承接有效后分批介入。"
+
     advice = {
         "建议买入区间": f"{buy_low} ~ {buy_high}",
         "建议买入区间_低": buy_low, "建议买入区间_高": buy_high,
@@ -371,13 +384,16 @@ def evaluate_strategy_main_force_game(df: pd.DataFrame, row_data: dict, enable_w
         "动态压力位": round(max_p_25d, 2),
         "动态支撑位": round(logic_base_price, 2),
         "ATR": round(atr, 3),
-        "自适应仓位": "30% (博弈主力建仓仓位)"
+        "自适应仓位": "30% (博弈主力建仓仓位)",
+        "最佳时段": timing_slot,
+        "策略轨道": style_tag
     }
 
     timing_dict = {
         "买点战术详情": [
+            timing_detail_text,
             f"🎯 【主力防守线】：以建仓起涨底线 {stop_loss_logic} 元为防守依据，不破不恐慌割肉！",
-            f"🌊 【假摔低吸】：主力常砸盘震仓，在买入区间 [{buy_low}~{buy_high}] 分批建仓。",
+            f"🌊 【区间低吸】：主力常砸盘震仓，在买入区间 [{buy_low}~{buy_high}] 分批建仓。",
             f"🚀 【止盈目标】：因何而买就因何而卖，反弹至前高 {max_p_25d} 元附近分批止盈。"
         ]
     }
@@ -427,6 +443,9 @@ def evaluate_strategy_classic_atr(df: pd.DataFrame, row_data: dict, enable_weekl
     stop_loss_p = round(min(df['最低'].iloc[-1], ma20) - 0.6 * atr, 2)
     target1 = round(close[-1] + 1.2 * atr, 2)
 
+    timing_slot = "🌇 尾盘确认 (14:30-14:50)"
+    style_tag = "🛡️ 稳健防守轨"
+
     advice = {
         "建议买入区间": f"{buy_low} ~ {buy_high}",
         "建议买入区间_低": buy_low, "建议买入区间_高": buy_high,
@@ -435,11 +454,14 @@ def evaluate_strategy_classic_atr(df: pd.DataFrame, row_data: dict, enable_weekl
         "动态压力位": round(close[-1] * 1.08, 2),
         "动态支撑位": round(ma20, 2),
         "ATR": round(atr, 3),
-        "自适应仓位": "25% (ATR波动率平价)"
+        "自适应仓位": "25% (ATR波动率平价)",
+        "最佳时段": timing_slot,
+        "策略轨道": style_tag
     }
 
     timing_dict = {
         "买点战术详情": [
+            "🌇 【尾盘买入】：趋势均线低吸标的，规避日内冲高回落风险，14:30 后确认站稳均线即可介入。",
             f"🚀 【顺势低吸】：回踩买入区间 [{buy_low}~{buy_high}] 分批布局。",
             f"🛡️ 【ATR止损】：严格执行动态止损线 {stop_loss_p} 元。"
         ]
@@ -476,6 +498,8 @@ def worker_task(code, name, row_data, is_main_force, enable_weekly, enable_funda
         "代码": code, "名称": name,
         "综合评分": total, "质量分": quality, "时机分": timing, "风险": risk_level,
         "最新价": last_close, "涨跌幅(%)": round(pct_today, 2), "成交额(万)": int(amt_wan),
+        "最佳时段": advice.get("最佳时段", "🌇 尾盘确认 (14:30-14:50)"),
+        "轨道类型": advice.get("策略轨道", "🛡️ 稳健防守轨"),
         "PB": row_data.get("PB", 0),
         "量化特征": " | ".join(tags) if tags else "主力博弈",
         "advice": advice, "timing": timing_dict, "radar": radar, "chip_info": chip_info,
@@ -509,7 +533,7 @@ if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use
     t_start = time.time()
     with st.spinner(f"正在全景扫描主板标的池..."):
         pool = get_all_realtime_stocks_tx(board_type, min_price, max_price, min_amount, exclude_limit_up)
-    
+
     if len(pool) == 0:
         st.error("❌ 标的池初筛为空，请适当调宽左侧【股价区间】（如 2.0 ~ 80.0 元）或降低【最低日成交额门槛】。")
         st.stop()
@@ -556,31 +580,45 @@ with tab_view_select:
         results = st.session_state['scan_results']
         kline_cache = st.session_state['kline_cache']
         res_df = pd.DataFrame(results)
-        st.success(f"🎉 投研完成！已采用【{strategy_mode}】严选出 **Top {len(res_df)}** 只低吸标的。")
 
-        display_cols = ["代码", "名称", "综合评分", "质量分", "时机分", "量化特征", "最新价", "涨跌幅(%)", "成交额(万)"]
-        st.dataframe(res_df[display_cols], use_container_width=True, hide_index=True)
+        # 增加时段快捷筛选
+        f_col1, f_col2 = st.columns([3, 7])
+        with f_col1:
+            slot_filter = st.radio("⏰ 按操作时段快捷过滤：", ["全部", "🌅 早盘低吸", "🌇 尾盘确认"], horizontal=True)
+        
+        if slot_filter != "全部":
+            filtered_df = res_df[res_df["最佳时段"].str.contains(slot_filter[:2])].reset_index(drop=True)
+        else:
+            filtered_df = res_df
+
+        st.success(f"🎉 投研完成！已采用【{strategy_mode}】严选出 **Top {len(filtered_df)}** 只低吸标的。")
+
+        display_cols = ["代码", "名称", "综合评分", "最佳时段", "轨道类型", "量化特征", "最新价", "涨跌幅(%)", "成交额(万)"]
+        st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
 
         st.subheader("📊 个股决策中枢")
-        selected_code = st.selectbox(
-            "选择要诊断的股票：",
-            options=[r["代码"] for r in results],
-            format_func=lambda x: f"[{next(r['综合评分'] for r in results if r['代码']==x)}分] {x} - {next(r['名称'] for r in results if r['代码']==x)} | {next(r['量化特征'] for r in results if r['代码']==x)}"
-        )
+        if not filtered_df.empty:
+            selected_code = st.selectbox(
+                "选择要诊断的股票：",
+                options=filtered_df["代码"].tolist(),
+                format_func=lambda x: f"[{next(r['综合评分'] for r in results if r['代码']==x)}分] {x} - {next(r['名称'] for r in results if r['代码']==x)} | {next(r['最佳时段'] for r in results if r['代码']==x)}"
+            )
 
-        if selected_code and selected_code in kline_cache:
-            s_name, s_df, s_adv, s_radar, s_timing, s_chip, s_row_data = kline_cache[selected_code]
-            target_item = next(r for r in results if r['代码'] == selected_code)
+            if selected_code and selected_code in kline_cache:
+                s_name, s_df, s_adv, s_radar, s_timing, s_chip, s_row_data = kline_cache[selected_code]
 
-            ca, cb, cc, cd = st.columns(4)
-            ca.metric("🎯 建议买入区间", s_adv["建议买入区间"])
-            cb.metric("🛡️ 逻辑防守线", s_adv["建议止损位"].split(" ")[0])
-            cc.metric("🚀 第一止盈目标", s_adv["第一止盈目标"].split(" ")[0])
-            cd.metric("👑 筹码峰", f"{s_chip['筹码峰']} 元")
+                ca, cb, cc, cd, ce = st.columns(5)
+                ca.metric("⏰ 最佳时机", s_adv.get("最佳时段", "尾盘买入"))
+                cb.metric("🎯 建议买入区间", s_adv["建议买入区间"])
+                cc.metric("🛡️ 逻辑防守线", s_adv["建议止损位"].split(" ")[0])
+                cd.metric("🚀 第一止盈目标", s_adv["第一止盈目标"].split(" ")[0])
+                ce.metric("👑 筹码峰", f"{s_chip['筹码峰']} 元")
 
-            st.info(f"💡 **操盘战术指引**：\n" + "\n".join([f"- {t}" for t in s_timing['买点战术详情']]))
+                st.info(f"💡 **操盘战术指引**：\n" + "\n".join([f"- {t}" for t in s_timing['买点战术详情']]))
 
-            st.plotly_chart(draw_pro_kline(selected_code, s_name, s_df, s_adv), use_container_width=True)
+                st.plotly_chart(draw_pro_kline(selected_code, s_name, s_df, s_adv), use_container_width=True)
+        else:
+            st.warning("⚠️ 当前时段筛选下暂无匹配标的，可切换为【全部】查看。")
 
     elif st.session_state.get('has_scanned'):
         st.warning("⚠️ 扫描池暂时为空，请在左侧将【股价区间】调宽至 2.0 ~ 80.0 元，并调低成交额门槛后重新扫描。")
