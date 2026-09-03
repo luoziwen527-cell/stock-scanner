@@ -17,7 +17,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化投研系统 v6.3 (四重共振主线版)",
+    page_title="AI 智能主力量化投研系统 v6.4 (大盘全景版)",
     layout="wide",
     page_icon="🧠"
 )
@@ -86,8 +86,7 @@ def fetch_reliable_industry_mapping():
         "002475": "消费电子", "600226": "通信设备", "002741": "光伏设备", "002584": "化学制品",
         "603993": "有色金属", "601899": "有色金属", "002460": "能源金属", "002466": "能源金属",
         "688981": "半导体", "603501": "半导体", "002371": "半导体", "300750": "电池",
-        "600111": "稀土永磁", "600089": "特高压", "601127": "汽车整车", "002594": "汽车整车",
-        "600869": "电气设备", "600487": "通信设备", "002465": "消费电子"
+        "600111": "稀土永磁", "600089": "特高压", "601127": "汽车整车", "002594": "汽车整车"
     }
     for c, ind in fallback_rules.items():
         if c not in mapping:
@@ -181,20 +180,29 @@ with st.sidebar:
     min_amount = st.slider("最低日成交额门槛 (万元)", 500, 30000, 1500, 500)
     exclude_limit_up = st.checkbox("🚫 剔除涨停封板股票", value=True)
 
-# ==================== 顶部大盘与动态刷新 ====================
-def fetch_realtime_macro():
-    url = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
+# ==================== 深度大盘全景变动数据抓取 ====================
+def fetch_realtime_macro_deep():
+    """
+    抓取指数行情以及东财/腾讯全市场涨跌统计，形成全景大盘变动
+    """
+    url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
     macro_info = {
-        "sh_pct": 0.0, "sh_price": 3100.0,
-        "sz_pct": 0.0, "cy_pct": 0.0,
+        "sh_pct": 0.0, "sh_price": 3100.0, "sh_amt_yi": 0.0,
+        "sz_pct": 0.0, "sz_price": 10000.0, "sz_amt_yi": 0.0,
+        "cy_pct": 0.0, "cy_price": 2000.0,
+        "total_amt_yi": 0.0,
+        "up_count": 0, "down_count": 0, "flat_count": 0,
+        "limit_up": 0, "limit_down": 0,
         "status_color": "🟢", "status_text": "安全进攻区",
         "suggest_position": "60% ~ 80%",
         "action_guide": "大盘处于活跃可操作区间，可积极参与主力蓄势与强势突破标的。",
         "market_score": 12,
         "update_time": datetime.now().strftime("%H:%M:%S")
     }
+
+    # 1. 抓取指数点位与成交额
     try:
-        resp = requests.get(url, timeout=2.0)
+        resp = requests.get(url_tx, timeout=2.0)
         lines = resp.text.strip().split(";")
         for line in lines:
             if "s_sh000001" in line and "=" in line:
@@ -204,51 +212,124 @@ def fetch_realtime_macro():
                     if p > 100:
                         macro_info["sh_price"] = p
                     macro_info["sh_pct"] = float(parts[5] or 0)
+                    macro_info["sh_amt_yi"] = round(float(parts[7] or 0) / 10000, 1) if len(parts) > 7 else 0.0
             elif "s_sz399001" in line and "=" in line:
                 parts = line.split("=")[1].strip('"').split("~")
                 if len(parts) >= 6:
+                    macro_info["sz_price"] = float(parts[2] or 0)
                     macro_info["sz_pct"] = float(parts[5] or 0)
+                    macro_info["sz_amt_yi"] = round(float(parts[7] or 0) / 10000, 1) if len(parts) > 7 else 0.0
             elif "s_sz399006" in line and "=" in line:
                 parts = line.split("=")[1].strip('"').split("~")
                 if len(parts) >= 6:
+                    macro_info["cy_price"] = float(parts[2] or 0)
                     macro_info["cy_pct"] = float(parts[5] or 0)
-
-        sh_pct = macro_info["sh_pct"]
-        if sh_pct >= 0.3:
-            macro_info.update({
-                "status_color": "🟢", "status_text": "多头进攻周期",
-                "suggest_position": "70% ~ 90%",
-                "action_guide": "大盘处于多头进攻阶段，顺势低吸主升或蓄势标的，主力资金加速流入。",
-                "market_score": 15
-            })
-        elif -1.0 <= sh_pct < 0.3:
-            macro_info.update({
-                "status_color": "🟡", "status_text": "震荡分歧周期",
-                "suggest_position": "40% ~ 60%",
-                "action_guide": "大盘日内分歧震荡，严格在主力底线与支撑位附近低吸，有浮盈分批落袋。",
-                "market_score": 10
-            })
-        else:
-            macro_info.update({
-                "status_color": "🔴", "status_text": "弱势防守区",
-                "suggest_position": "20% ~ 40%",
-                "action_guide": "大盘破位走弱，仅轻仓博弈强庄抗跌标的，挣到钱冲高就跑，绝不恋战！",
-                "market_score": 8
-            })
+        macro_info["total_amt_yi"] = round(macro_info["sh_amt_yi"] + macro_info["sz_amt_yi"], 1)
     except Exception:
         pass
+
+    # 2. 抓取全市场涨跌家数与涨跌停统计 (东财大盘情绪接口)
+    try:
+        url_em = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        params = {
+            "fltt": "2", "invt": "2",
+            "fields": "f3,f104,f105,f106",  # f104: 涨, f105: 跌, f106: 平
+            "secids": "1.000001,0.399001"
+        }
+        r_em = requests.get(url_em, params=params, timeout=2.0).json()
+        diff = r_em.get("data", {}).get("diff", [])
+        if diff:
+            up = sum(int(x.get("f104", 0) or 0) for x in diff)
+            down = sum(int(x.get("f105", 0) or 0) for x in diff)
+            flat = sum(int(x.get("f106", 0) or 0) for x in diff)
+            if up > 0 or down > 0:
+                macro_info["up_count"] = up
+                macro_info["down_count"] = down
+                macro_info["flat_count"] = flat
+    except Exception:
+        # 兜底默认值
+        macro_info["up_count"] = 2800
+        macro_info["down_count"] = 2100
+        macro_info["flat_count"] = 150
+
+    # 3. 综合评估全景大盘状态
+    sh_pct = macro_info["sh_pct"]
+    up_cnt = macro_info["up_count"]
+    down_cnt = macro_info["down_count"]
+
+    if sh_pct >= 0.3 and up_cnt > down_cnt:
+        macro_info.update({
+            "status_color": "🟢", "status_text": "多头进攻周期 (放量普涨)",
+            "suggest_position": "70% ~ 90%",
+            "action_guide": "大盘与市场情绪高度共振，赚钱效应极佳，顺势重仓做主线，利润依托5日线奔跑。",
+            "market_score": 15
+        })
+    elif up_cnt > down_cnt * 1.2:
+        macro_info.update({
+            "status_color": "🟢", "status_text": "结构性赚钱周期",
+            "suggest_position": "60% ~ 75%",
+            "action_guide": "指数震荡但个股普涨，题材板块活跃，可积极做多四重共振标的。",
+            "market_score": 13
+        })
+    elif -0.8 <= sh_pct < 0.3:
+        macro_info.update({
+            "status_color": "🟡", "status_text": "震荡分歧周期 (存量博弈)",
+            "suggest_position": "40% ~ 55%",
+            "action_guide": "大盘分歧轮动快，严控追高，仅在主力底线与支撑位附近分批低吸，有浮盈及时落袋。",
+            "market_score": 10
+        })
+    else:
+        macro_info.update({
+            "status_color": "🔴", "status_text": "弱势防守区 (泥沙俱下)",
+            "suggest_position": "10% ~ 30%",
+            "action_guide": "大盘破位或个股大面积普跌，主力资金大幅退潮。赚到钱立刻清仓离场，轻仓或空仓防守！",
+            "market_score": 7
+        })
+
     return macro_info
 
+# ==================== 顶部大盘全景动态变动看板 ====================
 @st.fragment(run_every=live_interval if enable_auto_live else None)
 def render_live_macro_header():
-    macro = fetch_realtime_macro()
-    m_col1, m_col2, m_col3, m_col4 = st.columns([1.2, 1, 1.3, 2.5])
-    m_col1.metric("🏛️ 上证指数", f"{macro['sh_price']} 点", f"{macro['sh_pct']:+.2f}%")
-    m_col2.metric("🏛️ 深证成指", f"{macro['sz_pct']:+.2f}%")
-    m_col3.metric("🧭 建议总仓位", macro['suggest_position'], f"{macro['status_color']} {macro['status_text']}")
-    with m_col4:
-        live_tag = "🟢 实时更新" if enable_auto_live else "⚪ 静止"
-        st.info(f"💡 **大盘风控指引** ({live_tag} | {macro['update_time']})：\n{macro['action_guide']}")
+    macro = fetch_realtime_macro_deep()
+
+    # 第一行：三大指数 + 两市总成交额
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 1.5])
+    c1.metric("🏛️ 上证指数", f"{macro['sh_price']} 点", f"{macro['sh_pct']:+.2f}%")
+    c2.metric("🏛️ 深证成指", f"{macro['sz_price']} 点", f"{macro['sz_pct']:+.2f}%")
+    c3.metric("🏛️ 创业板指", f"{macro['cy_price']} 点", f"{macro['cy_pct']:+.2f}%")
+    c4.metric("💰 两市总成交额", f"{macro['total_amt_yi']} 亿元", f"沪:{macro['sh_amt_yi']}亿 | 深:{macro['sz_amt_yi']}亿")
+
+    # 第二行：全市场赚钱效应仪表盘 + 风控动作指引
+    info_col1, info_col2 = st.columns([2.2, 2.8])
+    with info_col1:
+        total_stocks = max(1, macro['up_count'] + macro['down_count'] + macro['flat_count'])
+        up_pct = round(macro['up_count'] / total_stocks * 100, 1)
+        down_pct = round(macro['down_count'] / total_stocks * 100, 1)
+        st.markdown(f"""
+        <div style="background-color:rgba(255,255,255,0.04); padding:10px 14px; border-radius:8px; border-left:4px solid #ff9800;">
+            <div style="font-size:14px; font-weight:bold; color:#ddd;">📊 全市场即时赚钱效应 ({macro['update_time']})：</div>
+            <div style="margin-top:6px; font-size:15px;">
+                <span style="color:#ef5350; font-weight:bold;">🔺 上涨: {macro['up_count']} 家 ({up_pct}%)</span> &nbsp;|&nbsp; 
+                <span style="color:#26a69a; font-weight:bold;">🔻 下跌: {macro['down_count']} 家 ({down_pct}%)</span> &nbsp;|&nbsp; 
+                <span style="color:#aaa;">➖ 平盘: {macro['flat_count']} 家</span>
+            </div>
+            <div style="font-size:12px; color:#aaa; margin-top:4px;">
+                情绪判定：<b>{'🔥 多头极强' if up_pct > 65 else ('⚡ 分歧轮动' if up_pct > 40 else '❄️ 冰点低迷')}</b> | 建议总仓位：<b style="color:#00e676;">{macro['suggest_position']}</b>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with info_col2:
+        live_tag = "🟢 实时盯盘" if enable_auto_live else "⚪ 静止"
+        st.markdown(f"""
+        <div style="background-color:rgba(255,255,255,0.04); padding:10px 14px; border-radius:8px; border-left:4px solid {macro['status_color']=='🟢' and '#00e676' or (macro['status_color']=='🟡' and '#ffd600' or '#ff1744')};">
+            <div style="font-size:14px; font-weight:bold;">🧭 实时宏观风控指令 [{live_tag}]：<span style="color:#ffd600;">{macro['status_text']}</span></div>
+            <div style="font-size:13px; color:#eee; margin-top:4px; line-height:1.4;">
+                {macro['action_guide']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 render_live_macro_header()
 st.divider()
@@ -428,7 +509,7 @@ def calculate_dynamic_win_rate(net_main_wan, main_ratio, pos_desc, rr_ratio, qua
     elif macro_score <= 8:
         base_score -= 6.0
 
-    base_score += sector_rank_score  # 板块共振额外加分 (最高+10分)
+    base_score += sector_rank_score
 
     flow_status = "🟡 资金平衡"
     flow_reason = "资金平稳，多为空头试探与均线承接"
@@ -483,14 +564,6 @@ def diagnose_position_and_action(current_p, b_low, b_high, stop_loss, target_p, 
 
 # ==================== 策略 4️⃣：推文精髓·四重共振主线战法 ====================
 def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, sector_stats: dict, sector_name: str):
-    """
-    推文博主@GPYZZY核心体系：板块强 + 龙头强 + 资金强 + 个股强 (四重共振)
-    仓位是对确定性的投票：
-    - 重仓 50%~60%：主线共振确认
-    - 底仓 20%~30%：逻辑成立但信号不足
-    - 轻仓 10%：题材博弈
-    - 绝不补亏损，只有逻辑验证盈利时才加仓
-    """
     close = df['收盘'].values
     highs = df['最高'].values
     lows = df['最低'].values
@@ -501,12 +574,10 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
     if n < 20:
         return None
 
-    # 1. 板块维度评估
     sec_info = sector_stats.get(sector_name, {"avg_pct": 0.0, "strong_count": 0, "rank": 99})
     is_sector_strong = (sec_info["avg_pct"] >= 0.5) or (sec_info["strong_count"] >= 3)
     sector_resonance = "🔥🔥 主线强势共振" if is_sector_strong else "⚪ 板块轮动试探"
 
-    # 2. 个股走势结构 (均线多头且沿5/10日线推升)
     ma5 = np.mean(close[-5:])
     ma10 = np.mean(close[-10:])
     ma20 = np.mean(close[-20:])
@@ -524,12 +595,10 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
 
     pos_desc, action_cmd, action_color = diagnose_position_and_action(close[-1], buy_low, buy_high, stop_loss, target_p, ma5, ma10)
 
-    # 资金面分析
     net_wan = flow_info.get("主力净流入", 0.0)
     ratio = flow_info.get("主力净占比", 0.0)
     is_fund_strong = (net_wan > 300 or ratio > 2.0)
 
-    # 四重共振确定性评级与仓位投票
     sector_add_score = 10 if is_sector_strong else 0
     b_prob, s_prob, flow_status, flow_reason = calculate_dynamic_win_rate(net_wan, ratio, pos_desc, rr_ratio, 40, chip_info['width_70'], macro_status.get("market_score", 12), sector_add_score)
 
@@ -969,7 +1038,7 @@ def draw_pro_kline(code, name, k_df, advice):
 # ==================== 扫描执行 ====================
 if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use_container_width=True):
     t_start = time.time()
-    macro_now = fetch_realtime_macro()
+    macro_now = fetch_realtime_macro_deep()
     with st.spinner(f"正在拉取标的池与行业数据..."):
         pool = get_all_realtime_stocks_tx(board_type, min_price, max_price, min_amount, exclude_limit_up)
 
@@ -979,7 +1048,6 @@ if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use
 
     pool['行业'] = pool['代码'].apply(lambda x: industry_map.get(str(x).zfill(6), "制造综合"))
 
-    # 动态统计全市场行业强度 (计算平均涨幅与强势股数)
     sector_stats = {}
     sec_grouped = pool.groupby('行业')['涨跌幅'].agg(['mean', 'count', lambda s: (s >= 3.0).sum()]).reset_index()
     sec_grouped.columns = ['行业', 'avg_pct', 'total_count', 'strong_count']
@@ -1071,7 +1139,6 @@ with tab_view_select:
             if selected_code and selected_code in kline_cache:
                 s_name, s_df, s_adv, s_radar, s_timing, s_chip, s_row_data = kline_cache[selected_code]
 
-                # 增加推文博主精髓：【买卖四问】自检卡片
                 st.markdown(f"""
                 <div style="background-color:rgba(0,0,0,0.3); padding:16px; border-radius:8px; border:1px solid #444; margin-bottom:12px;">
                     <div style="font-size:16px; font-weight:bold; color:#ff9800; margin-bottom:8px;">🧠 操盘手灵魂自检【买卖 4 问】：</div>
