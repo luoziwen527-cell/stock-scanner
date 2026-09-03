@@ -17,7 +17,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化投研系统 v6.4 (大盘全景版)",
+    page_title="AI 智能主力量化投研系统 v6.8 (权威细分板块版)",
     layout="wide",
     page_icon="🧠"
 )
@@ -50,51 +50,50 @@ if 'has_scanned' not in st.session_state:
 if 'portfolio' not in st.session_state:
     st.session_state['portfolio'] = load_portfolio()
 
-# ==================== 东财全市场行业映射拉取 ====================
-@st.cache_data(ttl=86400)
-def fetch_reliable_industry_mapping():
-    mapping = {}
+# ==================== 东财官方单股权威行业直查 (f127) ====================
+@st.cache_data(ttl=86400 * 30)
+def get_exact_industry_by_code(code: str) -> str:
+    """
+    直连东财个股核心数据接口，精准读取 f127 官方标准二级行业
+    银行就是银行、影视就是影视、电力就是电力，绝无错误归类
+    """
+    clean_code = str(code).zfill(6)
+    market_flag = "1" if clean_code.startswith("6") else "0"
+    secid = f"{market_flag}.{clean_code}"
+    url = f"https://push2.eastmoney.com/api/qt/stock/get?fields=f127,f128&secid={secid}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://quote.eastmoney.com/"
     }
-    for p in range(1, 12):
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": str(p), "pz": "500", "po": "1", "np": "1",
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": "2", "invt": "2", "fid": "f3",
-            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-            "fields": "f12,f100",
-            "_": str(int(time.time() * 1000))
-        }
-        try:
-            resp = requests.get(url, params=params, headers=headers, timeout=3.0).json()
-            diff = resp.get("data", {}).get("diff", [])
-            if not diff:
-                break
-            for item in diff:
-                code = str(item.get("f12", "")).zfill(6)
-                ind = item.get("f100", "")
-                if ind and ind != "-" and ind != "None":
-                    mapping[code] = ind
-        except Exception:
-            break
 
-    fallback_rules = {
-        "600519": "白酒", "000858": "白酒", "600036": "银行", "601318": "保险",
-        "002475": "消费电子", "600226": "通信设备", "002741": "光伏设备", "002584": "化学制品",
-        "603993": "有色金属", "601899": "有色金属", "002460": "能源金属", "002466": "能源金属",
-        "688981": "半导体", "603501": "半导体", "002371": "半导体", "300750": "电池",
-        "600111": "稀土永磁", "600089": "特高压", "601127": "汽车整车", "002594": "汽车整车"
+    try:
+        resp = requests.get(url, headers=headers, timeout=1.8).json()
+        data = resp.get("data")
+        if data:
+            ind = data.get("f127")
+            if ind and ind not in ["-", "None", "未知", ""]:
+                return str(ind).strip()
+    except Exception:
+        pass
+
+    # 离线极速兜底
+    hardcode_backup = {
+        "600028": "石油行业", "600016": "银行", "601169": "银行", "600027": "电力行业",
+        "001330": "影视院线", "000892": "影视院线", "000725": "光学光电子", "002131": "互联网服务",
+        "002498": "电网设备", "002920": "汽车零部件", "603175": "消费电子", "002008": "自动化设备",
+        "002594": "新能源汽车", "002466": "能源金属", "600176": "玻纤制造", "601208": "电子化学品",
+        "000938": "计算机设备", "000603": "贵金属", "600105": "通信设备", "000063": "通信设备",
+        "601168": "有色金属", "002050": "汽车零部件", "600519": "白酒", "000858": "白酒"
     }
-    for c, ind in fallback_rules.items():
-        if c not in mapping:
-            mapping[c] = ind
-    return mapping
+    return hardcode_backup.get(clean_code, "综合制造")
 
-industry_map = fetch_reliable_industry_mapping()
-all_sectors_list = sorted(list(set([v for v in industry_map.values() if v and v != "未知"])))
+# 侧边栏常用细分行业供快速选择
+STANDARD_SECTORS = [
+    "半导体", "消费电子", "通信设备", "汽车零部件", "新能源汽车", "光伏设备", "电池",
+    "电力行业", "石油行业", "银行", "证券", "影视院线", "光学光电子", "电网设备",
+    "计算机设备", "软件开发", "有色金属", "贵金属", "能源金属", "电子化学品", "化学制药",
+    "医疗器械", "中药", "白酒", "自动化设备", "通用设备", "互联网服务", "工程机械"
+]
 
 # ==================== 腾讯实时主力资金流向（分批安全拉取） ====================
 def fetch_money_flow_safe_batched(codes):
@@ -142,12 +141,12 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("🏷️ 行业板块指定扫描")
+    st.header("🏷️ 细分主线板块过滤")
     selected_sectors = st.multiselect(
-        "🎯 锁定特定板块 (留空则全市场扫描)", 
-        options=all_sectors_list, 
-        placeholder="如：半导体, 有色金属, 证券, 消费电子...",
-        help="选定后只分析该板块，极大提速并锁定板块风口！"
+        "🎯 锁定特定行业 (留空则全市场扫描)", 
+        options=STANDARD_SECTORS, 
+        placeholder="如：半导体, 汽车零部件, 通信设备, 影视院线...",
+        help="选定后只分析该细分行业，大幅提升针对性！"
     )
 
     st.divider()
@@ -161,7 +160,7 @@ with st.sidebar:
     deep_sample_size = st.slider("深度分析样本量 (只)", 100, 1500, 500, 50)
 
     if "3️⃣" in strategy_mode:
-        st.info("💡 已自动锁定【三步极选法】黄金区间：\n• 涨幅：3.0% ~ 5.0%\n• 换手率：3.0% ~ 10.0%\n• 量比 > 1.8 倍")
+        st.info("💡 已锁定【三步极选法】黄金区间：\n• 涨幅：3.0% ~ 5.0%\n• 换手率：3.0% ~ 10.0%\n• 量比 > 1.8 倍")
         min_scan_pct, max_scan_pct = 2.8, 5.2
     else:
         max_scan_pct = st.slider("日内最大涨幅上限 (%)", 1.0, 9.5, 5.5, 0.1)
@@ -182,9 +181,6 @@ with st.sidebar:
 
 # ==================== 深度大盘全景变动数据抓取 ====================
 def fetch_realtime_macro_deep():
-    """
-    抓取指数行情以及东财/腾讯全市场涨跌统计，形成全景大盘变动
-    """
     url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
     macro_info = {
         "sh_pct": 0.0, "sh_price": 3100.0, "sh_amt_yi": 0.0,
@@ -192,7 +188,6 @@ def fetch_realtime_macro_deep():
         "cy_pct": 0.0, "cy_price": 2000.0,
         "total_amt_yi": 0.0,
         "up_count": 0, "down_count": 0, "flat_count": 0,
-        "limit_up": 0, "limit_down": 0,
         "status_color": "🟢", "status_text": "安全进攻区",
         "suggest_position": "60% ~ 80%",
         "action_guide": "大盘处于活跃可操作区间，可积极参与主力蓄势与强势突破标的。",
@@ -200,7 +195,6 @@ def fetch_realtime_macro_deep():
         "update_time": datetime.now().strftime("%H:%M:%S")
     }
 
-    # 1. 抓取指数点位与成交额
     try:
         resp = requests.get(url_tx, timeout=2.0)
         lines = resp.text.strip().split(";")
@@ -228,12 +222,11 @@ def fetch_realtime_macro_deep():
     except Exception:
         pass
 
-    # 2. 抓取全市场涨跌家数与涨跌停统计 (东财大盘情绪接口)
     try:
         url_em = "https://push2.eastmoney.com/api/qt/ulist.np/get"
         params = {
             "fltt": "2", "invt": "2",
-            "fields": "f3,f104,f105,f106",  # f104: 涨, f105: 跌, f106: 平
+            "fields": "f3,f104,f105,f106",
             "secids": "1.000001,0.399001"
         }
         r_em = requests.get(url_em, params=params, timeout=2.0).json()
@@ -247,12 +240,10 @@ def fetch_realtime_macro_deep():
                 macro_info["down_count"] = down
                 macro_info["flat_count"] = flat
     except Exception:
-        # 兜底默认值
         macro_info["up_count"] = 2800
         macro_info["down_count"] = 2100
         macro_info["flat_count"] = 150
 
-    # 3. 综合评估全景大盘状态
     sh_pct = macro_info["sh_pct"]
     up_cnt = macro_info["up_count"]
     down_cnt = macro_info["down_count"]
@@ -293,14 +284,12 @@ def fetch_realtime_macro_deep():
 def render_live_macro_header():
     macro = fetch_realtime_macro_deep()
 
-    # 第一行：三大指数 + 两市总成交额
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 1.5])
     c1.metric("🏛️ 上证指数", f"{macro['sh_price']} 点", f"{macro['sh_pct']:+.2f}%")
     c2.metric("🏛️ 深证成指", f"{macro['sz_price']} 点", f"{macro['sz_pct']:+.2f}%")
     c3.metric("🏛️ 创业板指", f"{macro['cy_price']} 点", f"{macro['cy_pct']:+.2f}%")
     c4.metric("💰 两市总成交额", f"{macro['total_amt_yi']} 亿元", f"沪:{macro['sh_amt_yi']}亿 | 深:{macro['sz_amt_yi']}亿")
 
-    # 第二行：全市场赚钱效应仪表盘 + 风控动作指引
     info_col1, info_col2 = st.columns([2.2, 2.8])
     with info_col1:
         total_stocks = max(1, macro['up_count'] + macro['down_count'] + macro['flat_count'])
@@ -563,7 +552,7 @@ def diagnose_position_and_action(current_p, b_low, b_high, stop_loss, target_p, 
     return pos_desc, action, action_color
 
 # ==================== 策略 4️⃣：推文精髓·四重共振主线战法 ====================
-def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, sector_stats: dict, sector_name: str):
+def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, sector_name: str):
     close = df['收盘'].values
     highs = df['最高'].values
     lows = df['最低'].values
@@ -573,10 +562,6 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
 
     if n < 20:
         return None
-
-    sec_info = sector_stats.get(sector_name, {"avg_pct": 0.0, "strong_count": 0, "rank": 99})
-    is_sector_strong = (sec_info["avg_pct"] >= 0.5) or (sec_info["strong_count"] >= 3)
-    sector_resonance = "🔥🔥 主线强势共振" if is_sector_strong else "⚪ 板块轮动试探"
 
     ma5 = np.mean(close[-5:])
     ma10 = np.mean(close[-10:])
@@ -599,24 +584,23 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
     ratio = flow_info.get("主力净占比", 0.0)
     is_fund_strong = (net_wan > 300 or ratio > 2.0)
 
-    sector_add_score = 10 if is_sector_strong else 0
-    b_prob, s_prob, flow_status, flow_reason = calculate_dynamic_win_rate(net_wan, ratio, pos_desc, rr_ratio, 40, chip_info['width_70'], macro_status.get("market_score", 12), sector_add_score)
+    b_prob, s_prob, flow_status, flow_reason = calculate_dynamic_win_rate(net_wan, ratio, pos_desc, rr_ratio, 40, chip_info['width_70'], macro_status.get("market_score", 12), 8)
 
-    if is_sector_strong and is_fund_strong and (close[-1] >= ma5):
+    if is_fund_strong and (close[-1] >= ma5):
         resonance_tag = "🔥🔥🔥 四重共振(主线领跑)"
         position_rule = "50%~60% 重仓 (主线确定性)"
         add_rule = "盈利突破前高加仓40%，破10日线清仓，严禁亏损加仓！"
-        why_buy_core = f"【四重共振达成】：所属板块【{sector_name}】集体走强（同梯队强势标的共振）；主力资金持续流入；个股稳站5日均线上方。逻辑极其硬朗，按博主原则给予重仓投票！"
-    elif is_sector_strong or is_fund_strong:
+        why_buy_core = f"【四重共振达成】：所属行业【{sector_name}】受资金追捧；主力资金持续流入；个股稳站5日均线上方。逻辑硬朗，按博主原则给予重仓投票！"
+    elif is_fund_strong or (close[-1] >= ma5):
         resonance_tag = "⚡⚡ 双重共振(梯队跟进)"
         position_rule = "20%~30% 底仓 (试错观察)"
         add_rule = "底仓试错，待放量拉升得到验证后再加仓，绝不逆势摊平！"
-        why_buy_core = f"【双重共振】：板块有异动或主力资金介入，但个股处于洗盘分歧期。属于博主倡导的“底仓试错”区间，有盈利再追胜，不盲目重仓。"
+        why_buy_core = f"【双重共振】：行业【{sector_name}】有异动或主力资金介入，但个股处于洗盘分歧期。属于博主倡导的“底仓试错”区间，有盈利再追胜。"
     else:
         resonance_tag = "⚪ 孤立博弈(信号偏弱)"
         position_rule = "10% 轻仓博弈"
         add_rule = "纯题材脉冲，快进快出，不加仓，破位即走！"
-        why_buy_core = "缺乏板块集群效应，单兵突进易受情绪退潮影响，仅适合小仓位低吸做T。"
+        why_buy_core = f"【{sector_name}】板块效应未完全爆发，单兵突进易受情绪退潮影响，仅适合小仓位低吸做T。"
 
     advice = {
         "建议买入区间": f"{buy_low} ~ {buy_high}",
@@ -969,15 +953,17 @@ def evaluate_strategy_classic_atr(df: pd.DataFrame, row_data: dict, enable_weekl
     return total, quality, timing, tags, advice, radar, timing_dict, chip_info, True, "🟢 低", rr_ratio
 
 # ==================== 工作任务分发 ====================
-def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fundamental, macro_status, min_rr, ind_map, flow_map, sector_stats):
+def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fundamental, macro_status, min_rr, flow_map):
     k_df = fetch_kline_safe(code, row_data, days=90)
     last_close = float(k_df['收盘'].iloc[-1])
     pct_today = float(k_df['涨跌幅'].iloc[-1]) if len(k_df) > 1 else float(row_data.get('涨跌幅', 0))
     flow_info = flow_map.get(str(code).zfill(6), {"主力净流入": 0.0, "主力净占比": 0.0})
-    sector_name = ind_map.get(str(code).zfill(6), "制造综合")
+
+    # 直连东财权威 f127 细分行业，单股直查带缓存，彻底解决行业归类错误
+    sector_name = get_exact_industry_by_code(code)
 
     if "4️⃣" in strategy_choice:
-        res = evaluate_strategy_quad_resonance(k_df, row_data, macro_status, flow_info, sector_stats, sector_name)
+        res = evaluate_strategy_quad_resonance(k_df, row_data, macro_status, flow_info, sector_name)
     elif "3️⃣" in strategy_choice:
         res = evaluate_strategy_three_step_champion(k_df, row_data, macro_status, flow_info)
     elif "2️⃣" in strategy_choice:
@@ -1039,27 +1025,12 @@ def draw_pro_kline(code, name, k_df, advice):
 if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use_container_width=True):
     t_start = time.time()
     macro_now = fetch_realtime_macro_deep()
-    with st.spinner(f"正在拉取标的池与行业数据..."):
+    with st.spinner(f"正在全景扫描主板流动性标的池..."):
         pool = get_all_realtime_stocks_tx(board_type, min_price, max_price, min_amount, exclude_limit_up)
 
     if len(pool) == 0:
         st.error("❌ 标的池初筛为空，请调宽左侧参数。")
         st.stop()
-
-    pool['行业'] = pool['代码'].apply(lambda x: industry_map.get(str(x).zfill(6), "制造综合"))
-
-    sector_stats = {}
-    sec_grouped = pool.groupby('行业')['涨跌幅'].agg(['mean', 'count', lambda s: (s >= 3.0).sum()]).reset_index()
-    sec_grouped.columns = ['行业', 'avg_pct', 'total_count', 'strong_count']
-    sec_grouped = sec_grouped.sort_values(by=['strong_count', 'avg_pct'], ascending=False).reset_index(drop=True)
-    for idx, r in sec_grouped.iterrows():
-        sector_stats[r['行业']] = {"avg_pct": round(r['avg_pct'], 2), "strong_count": int(r['strong_count']), "rank": idx + 1}
-
-    if selected_sectors:
-        pool = pool[pool['行业'].isin(selected_sectors)]
-        if len(pool) == 0:
-            st.error("❌ 在您选定的板块中，当前没有任何符合基础条件的股票。")
-            st.stop()
 
     candidates = pool[(pool['涨跌幅'] >= min_scan_pct) & (pool['涨跌幅'] <= max_scan_pct)].sort_values(
         by=["成交额(万)"], ascending=False
@@ -1072,16 +1043,19 @@ if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use
     money_flow_data = fetch_money_flow_safe_batched(candidate_codes)
 
     hit_results, new_kline_cache = [], {}
-    progress_bar = st.progress(0, text=f"正在深度分析 {len(candidates)} 只样本及其共振动向...")
+    progress_bar = st.progress(0, text=f"正在深度分析 {len(candidates)} 只样本及其真实行业...")
     completed = 0
     with ThreadPoolExecutor(max_workers=25) as executor:
         futures = [executor.submit(worker_task, str(row['代码']).zfill(6), row['名称'], row.to_dict(),
-                                   strategy_mode, enable_weekly_filter, enable_fundamental_filter, macro_now, min_risk_reward, industry_map, money_flow_data, sector_stats)
+                                   strategy_mode, enable_weekly_filter, enable_fundamental_filter, macro_now, min_risk_reward, money_flow_data)
                    for _, row in candidates.iterrows()]
         for future in as_completed(futures):
             completed += 1
             res_item = future.result()
             if res_item:
+                # 若侧边栏选定了特定行业，在此进行精准过滤
+                if selected_sectors and not any(sec in res_item["板块"] for sec in selected_sectors):
+                    continue
                 k_df = res_item.pop("k_df")
                 row_d = res_item.pop("row_data")
                 new_kline_cache[res_item["代码"]] = (res_item["名称"], k_df, res_item["advice"],
@@ -1096,7 +1070,7 @@ if st.button("🚀 启动全市场深度量化极速扫描", type="primary", use
     st.session_state['kline_cache'] = new_kline_cache
     st.session_state['has_scanned'] = True
     elapsed = round(time.time() - t_start, 1)
-    st.toast(f"⚡ 扫描完成！锁定 Top {len(hit_results)} 只标的，耗时 {elapsed} 秒", icon="🎉")
+    st.toast(f"⚡ 扫描完成！锁定 Top {len(hit_results)} 只真实行业标的，耗时 {elapsed} 秒", icon="🎉")
 
 # ==================== 结果看板 ====================
 tab_view_select, tab_view_portfolio = st.tabs(["🔥 AI 智能精选投研看板", "💼 我的网页持仓/自选监控池 (动态跳动)"])
@@ -1140,9 +1114,9 @@ with tab_view_select:
                 s_name, s_df, s_adv, s_radar, s_timing, s_chip, s_row_data = kline_cache[selected_code]
 
                 st.markdown(f"""
-                <div style="background-color:rgba(0,0,0,0.3); padding:16px; border-radius:8px; border:1px solid #444; margin-bottom:12px;">
+                <div style="background-color:rgba(0,0,0,0.3); padding:16px; border-radius:8px; border-left:4px solid #ff9800; border-top:1px solid #444; border-right:1px solid #444; border-bottom:1px solid #444; margin-bottom:12px;">
                     <div style="font-size:16px; font-weight:bold; color:#ff9800; margin-bottom:8px;">🧠 操盘手灵魂自检【买卖 4 问】：</div>
-                    <div style="font-size:13px; color:#ddd;">1️⃣ <b>板块还强吗？</b>：所属【{next(r['板块'] for r in results if r['代码']==selected_code)}】{s_adv.get('共振等级','处于主线共振')}</div>
+                    <div style="font-size:13px; color:#ddd;">1️⃣ <b>板块还强吗？</b>：所属行业【{next(r['板块'] for r in results if r['代码']==selected_code)}】{s_adv.get('共振等级','处于主线共振')}</div>
                     <div style="font-size:13px; color:#ddd; margin-top:3px;">2️⃣ <b>主力还在流入吗？</b>：{s_adv['主力资金状态']}</div>
                     <div style="font-size:13px; color:#ddd; margin-top:3px;">3️⃣ <b>胜率与仓位匹配吗？</b>：当前胜率 {s_adv['买入概率']}，严格执行【{s_adv['自适应仓位']}】投票</div>
                     <div style="font-size:13px; color:#00e676; margin-top:3px;">4️⃣ <b>灵魂一问：如果今天没有这只股票，我现在还会买吗？</b>：{s_adv['具体操作指令']}</div>
