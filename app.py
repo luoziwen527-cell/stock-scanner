@@ -17,10 +17,79 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化投研系统 v7.5 (双止盈锚点+休市守护版)",
+    page_title="AI 智能主力量化投研系统 v7.7.1",
     layout="wide",
-    page_icon="🧠"
+    page_icon="📈"
 )
+
+# ==================== 现代清爽白色主题样式 ====================
+st.markdown("""
+<style>
+    /* 全局清爽亮白背景与文字 */
+    .stApp {
+        background-color: #f8fafc;
+        color: #0f172a;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    
+    /* 侧边栏浅灰底色 */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff !important;
+        border-right: 1px solid #e2e8f0;
+    }
+    
+    /* 核心指标卡片 */
+    div.metric-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+    }
+    
+    /* 选项卡标签样式 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: transparent;
+        border-radius: 6px 6px 0 0;
+        padding: 8px 18px;
+        color: #64748b;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #eef2ff !important;
+        color: #2563eb !important;
+        border-bottom: 2px solid #2563eb !important;
+    }
+    
+    /* 数据表格美化 */
+    div[data-testid="stDataFrame"] {
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        background: #ffffff;
+    }
+    
+    /* 按钮红色实操感 */
+    div.stButton > button[kind="primary"] {
+        background: #dc2626;
+        color: #ffffff;
+        font-weight: bold;
+        border: none;
+        border-radius: 8px;
+        padding: 10px 24px;
+        box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
+        transition: all 0.2s ease-in-out;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background: #b91c1c;
+        box-shadow: 0 4px 8px rgba(220, 38, 38, 0.3);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ==================== 本地持久化与配置 ====================
 CONFIG_FILE = "user_config.json"
@@ -71,25 +140,91 @@ if 'portfolio' not in st.session_state:
 
 # ==================== 交易时钟与静默判定 ====================
 def get_market_trading_status():
-    """判定是否在 A 股正常连续交易时段"""
     now = datetime.now()
-    weekday = now.weekday()  # 0~4 为周一至周五, 5~6 为周六周日
+    weekday = now.weekday()
     time_val = now.time()
-
     is_weekend = weekday >= 5
     is_trading_hour = (
         (datetime.strptime("09:15", "%H:%M").time() <= time_val <= datetime.strptime("11:35", "%H:%M").time()) or
         (datetime.strptime("12:55", "%H:%M").time() <= time_val <= datetime.strptime("15:05", "%H:%M").time())
     )
-
     if is_weekend:
-        return False, "🌙 周末休市模式 (已切换最近交易日复盘)"
+        return False, "🌙 周末静态复盘模式"
     elif not is_trading_hour:
-        return False, "🌙 盘后休市模式 (已切换最近收盘静态复盘)"
+        return False, "🌙 盘后收盘复盘模式"
     else:
-        return True, "🟢 实盘交易时段 (实时分钟级数据联动)"
+        return True, "🟢 实盘实时联动时段"
 
 is_trading_live, market_clock_status = get_market_trading_status()
+
+# ==================== 优先定义：大盘宏观风控抓取函数 ====================
+def fetch_realtime_macro_deep():
+    url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
+    macro_info = {
+        "sh_pct": 0.0, "sh_price": 3100.0, "sh_amt_yi": 0.0,
+        "sz_pct": 0.0, "sz_price": 10000.0, "sz_amt_yi": 0.0,
+        "cy_pct": 0.0, "cy_price": 2000.0,
+        "total_amt_yi": 0.0, "up_count": 0, "down_count": 0, "flat_count": 0,
+        "status_color": "🟢", "status_text": "安全进攻区",
+        "suggest_position": "60% ~ 80%",
+        "action_guide": "大盘处于活跃可操作区间，可积极参与主力蓄势与强势突破标的。",
+        "market_score": 12, "is_meltdown": False,
+        "update_time": datetime.now().strftime("%H:%M:%S")
+    }
+    try:
+        resp = requests.get(url_tx, timeout=2.0)
+        for line in resp.text.strip().split(";"):
+            if "s_sh000001" in line and "=" in line:
+                parts = line.split("=")[1].strip('"').split("~")
+                if len(parts) >= 6:
+                    p = float(parts[2] or 0)
+                    if p > 100: macro_info["sh_price"] = p
+                    macro_info["sh_pct"] = float(parts[5] or 0)
+                    macro_info["sh_amt_yi"] = round(float(parts[7] or 0) / 10000, 1) if len(parts) > 7 else 0.0
+            elif "s_sz399001" in line and "=" in line:
+                parts = line.split("=")[1].strip('"').split("~")
+                if len(parts) >= 6:
+                    macro_info["sz_price"] = float(parts[2] or 0)
+                    macro_info["sz_pct"] = float(parts[5] or 0)
+                    macro_info["sz_amt_yi"] = round(float(parts[7] or 0) / 10000, 1) if len(parts) > 7 else 0.0
+            elif "s_sz399006" in line and "=" in line:
+                parts = line.split("=")[1].strip('"').split("~")
+                if len(parts) >= 6:
+                    macro_info["cy_price"] = float(parts[2] or 0)
+                    macro_info["cy_pct"] = float(parts[5] or 0)
+        macro_info["total_amt_yi"] = round(macro_info["sh_amt_yi"] + macro_info["sz_amt_yi"], 1)
+    except Exception:
+        pass
+
+    try:
+        url_em = "https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f104,f105,f106&secids=1.000001,0.399001"
+        r_em = requests.get(url_em, timeout=2.0).json()
+        diff = r_em.get("data", {}).get("diff", [])
+        if diff:
+            macro_info["up_count"] = sum(int(x.get("f104", 0) or 0) for x in diff)
+            macro_info["down_count"] = sum(int(x.get("f105", 0) or 0) for x in diff)
+            macro_info["flat_count"] = sum(int(x.get("f106", 0) or 0) for x in diff)
+    except Exception:
+        macro_info["up_count"], macro_info["down_count"], macro_info["flat_count"] = 2800, 2100, 150
+
+    sh_pct = macro_info["sh_pct"]
+    down_cnt = macro_info["down_count"]
+
+    if down_cnt >= 3600 or sh_pct <= -1.8:
+        macro_info.update({
+            "status_color": "🛑", "status_text": "系统级空仓熔断 (泥沙俱下)",
+            "suggest_position": "0% (强制空仓)",
+            "action_guide": "全市场大面积杀跌，主力资金全线撤退避险！系统已触发强制风控熔断，今日严禁开仓！",
+            "market_score": 4, "is_meltdown": True
+        })
+    elif sh_pct >= 0.3 and macro_info["up_count"] > down_cnt:
+        macro_info.update({"status_color": "🟢", "status_text": "多头进攻周期", "suggest_position": "70% ~ 90%", "action_guide": "大盘赚钱效应极佳，顺势重仓做主线，利润依托5日线奔跑。", "market_score": 15})
+    elif -0.8 <= sh_pct < 0.3:
+        macro_info.update({"status_color": "🟡", "status_text": "震荡分歧周期", "suggest_position": "40% ~ 55%", "action_guide": "大盘轮动快，严控追高，仅在主力底线附近分批低吸，有浮盈及时落袋。", "market_score": 10})
+    else:
+        macro_info.update({"status_color": "🔴", "status_text": "弱势防守区", "suggest_position": "10% ~ 30%", "action_guide": "大盘震荡走弱，个股分化，轻仓或空仓防守！", "market_score": 7})
+
+    return macro_info
 
 # ==================== 微信推送引擎 ====================
 def send_wechat_push(title: str, content_markdown: str, push_token: str, push_channel: str = "PushPlus"):
@@ -166,7 +301,7 @@ def fetch_money_flow_safe_batched(codes):
             continue
     return flow_map
 
-# ==================== 实时/休市自适应分时数据抓取 ====================
+# ==================== 分时走势数据抓取与专业分时图 (白底适配) ====================
 def fetch_realtime_minute_timeline(code: str, k_df: pd.DataFrame = None):
     market = "sh" if str(code).startswith("60") else "sz"
     clean_c = str(code).zfill(6)
@@ -197,7 +332,6 @@ def fetch_realtime_minute_timeline(code: str, k_df: pd.DataFrame = None):
     except Exception:
         pass
 
-    # 休市守护兜底：若接口为空，从日 K 线模拟构造平滑分时，防止前端报错
     if k_df is not None and not k_df.empty:
         last_row = k_df.iloc[-1]
         c, o, h, l = last_row['收盘'], last_row['开盘'], last_row['最高'], last_row['最低']
@@ -211,25 +345,53 @@ def fetch_realtime_minute_timeline(code: str, k_df: pd.DataFrame = None):
 def draw_pro_timeline(code, name, timeline_df, prev_close):
     if timeline_df is None or timeline_df.empty:
         fig = go.Figure()
-        fig.add_annotation(text="暂未获取到分时走势数据", showarrow=False, font=dict(size=14, color="#aaa"))
-        fig.update_layout(height=400)
+        fig.add_annotation(text="暂无分时走势数据", showarrow=False, font=dict(size=14, color="#64748b"))
+        fig.update_layout(paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", height=420)
         return fig
 
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.72, 0.28])
-    fig.add_trace(go.Scatter(x=timeline_df['时间'], y=timeline_df['现价'], line=dict(color='#ffffff', width=1.6), name="分时现价"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=timeline_df['时间'], y=timeline_df['均价'], line=dict(color='#ffd600', width=1.5, dash='dash'), name="分时均价 (VWAP)"), row=1, col=1)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72, 0.28])
+
+    # 现价折线
+    fig.add_trace(go.Scatter(
+        x=timeline_df['时间'], y=timeline_df['现价'],
+        line=dict(color='#2563eb', width=1.8),
+        fill='tozeroy',
+        fillcolor='rgba(37, 99, 235, 0.08)',
+        name="分时现价"
+    ), row=1, col=1)
+
+    # 均价黄线 (VWAP)
+    fig.add_trace(go.Scatter(
+        x=timeline_df['时间'], y=timeline_df['均价'],
+        line=dict(color='#d97706', width=1.5, dash='dash'),
+        name="分时均价 (VWAP)"
+    ), row=1, col=1)
+
     if prev_close > 0:
-        fig.add_hline(y=prev_close, line_dash="dot", line_color="#78909c", annotation_text=f"基准: {prev_close}", row=1, col=1)
-    colors = ['#ef5350' if p >= prev_close else '#26a69a' for p in timeline_df['现价']]
-    fig.add_trace(go.Bar(x=timeline_df['时间'], y=timeline_df['成交量'], marker_color=colors, name="成交量"), row=2, col=1)
+        fig.add_hline(y=prev_close, line_dash="dot", line_color="#94a3b8", annotation_text=f"昨收基准: {prev_close}", row=1, col=1)
+
+    colors = ['#dc2626' if p >= prev_close else '#16a34a' for p in timeline_df['现价']]
+    fig.add_trace(go.Bar(
+        x=timeline_df['时间'], y=timeline_df['成交量'],
+        marker_color=colors, name="分时量能"
+    ), row=2, col=1)
 
     latest_p = timeline_df['现价'].iloc[-1]
     latest_vwap = timeline_df['均价'].iloc[-1]
     is_above = latest_p >= latest_vwap
 
     fig.update_layout(
-        title=f"⏱️ {code} {name} 分时走势 (现价: {latest_p}元 | 均价: {latest_vwap}元 | {'🟢 站稳均价线' if is_above else '🔴 均线下方承压'})",
-        xaxis_rangeslider_visible=False, height=420, margin=dict(l=10, r=10, t=40, b=10)
+        title=f"⏱️ {code} {name} 分时盘口 (现价: {latest_p}元 | 均线: {latest_vwap}元 | {'🟢 站稳均价线' if is_above else '🔴 均线下方承压'})",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(color="#1e293b"),
+        xaxis_rangeslider_visible=False,
+        height=430,
+        margin=dict(l=10, r=10, t=45, b=10),
+        xaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
+        yaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
+        xaxis2=dict(showgrid=True, gridcolor='#f1f5f9'),
+        yaxis2=dict(showgrid=True, gridcolor='#f1f5f9')
     )
     return fig
 
@@ -335,9 +497,9 @@ def run_strategy_backtest(k_df: pd.DataFrame, stop_loss_ratio: float = 0.02, pro
 
 # ==================== 侧边栏配置 ====================
 with st.sidebar:
-    st.header("🔀 核心量化策略 (4 选 1)")
+    st.markdown("<div style='font-size:18px; font-weight:bold; color:#0f172a; margin-bottom:12px;'>🔀 核心策略架构</div>", unsafe_allow_html=True)
     strategy_mode = st.selectbox(
-        "选择当前运行策略：",
+        "当前执行策略：",
         [
             "4️⃣ 推文精髓：四重共振主线战法 (强化版·板块+龙头+资金+确定性加仓)",
             "3️⃣ 图片绝技：三步极选强势股闭环策略 (量异动+均线多头+高控盘筹码)",
@@ -347,19 +509,29 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("📲 自动化微信推送配置")
-    enable_push = st.checkbox("🔔 开启扫描完成自动推送到手机微信", value=sys_config.get("enable_push", False))
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>⚡ 实时动态刷新设置</div>", unsafe_allow_html=True)
+    enable_auto_live = st.toggle("🔄 开启盘中秒级自动盯盘刷新", value=True)
+    live_interval = st.slider("动态刷新频率 (秒)", 3, 60, 5, 1) if enable_auto_live else 60
+
+    st.divider()
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>📊 选股日内涨幅设置</div>", unsafe_allow_html=True)
+    min_scan_pct = st.slider("日内最小涨幅下限 (%)", -9.0, 5.0, 1.5 if "4️⃣" in strategy_mode else 2.8, 0.1)
+    max_scan_pct = st.slider("日内最大涨幅上限 (%)", 1.0, 10.0, 7.0 if "4️⃣" in strategy_mode else 5.2, 0.1)
+
+    st.divider()
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>📲 自动化微信推送</div>", unsafe_allow_html=True)
+    enable_push = st.checkbox("🔔 尾盘扫描结果自动推送到微信", value=sys_config.get("enable_push", False))
     push_channel = st.selectbox("推送通道", ["PushPlus", "Server酱"], index=0 if sys_config.get("push_channel", "PushPlus") == "PushPlus" else 1)
-    push_token = st.text_input("微信推送 Token (Key)", value=sys_config.get("push_token", ""), type="password", help="关注微信公众号【PushPlus推送加】免费获取Token")
+    push_token = st.text_input("微信推送 Token", value=sys_config.get("push_token", ""), type="password")
 
     if st.button("📨 测试发送微信消息", use_container_width=True):
         if not push_token:
             st.error("请先输入 Token！")
         else:
             with st.spinner("正在发送测试推送..."):
-                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信绑定成功！**\n\n- 运行版本：v7.5 双止盈锚点版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
+                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v7.7.1 纯白全控版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
                 if ok:
-                    st.success("✅ 微信已收到测试通知！配置自动保存。")
+                    st.success("✅ 微信推送测试成功！")
                     sys_config.update({"enable_push": enable_push, "push_channel": push_channel, "push_token": push_token})
                     save_config(sys_config)
                 else:
@@ -370,30 +542,17 @@ with st.sidebar:
         save_config(sys_config)
 
     st.divider()
-    st.header("🏷️ 细分主线板块精选")
-    selected_sectors = st.multiselect("🎯 锁定特定行业 (留空则全市场扫描)", options=STANDARD_SECTORS, placeholder="如：半导体, 通信设备...")
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>🏷️ 细分主线聚焦</div>", unsafe_allow_html=True)
+    selected_sectors = st.multiselect("🎯 锁定行业赛道 (留空则全市场扫描)", options=STANDARD_SECTORS, placeholder="如：半导体, 通信设备...")
 
     st.divider()
-    st.header("⚡ 实时动态跳动配置")
-    enable_auto_live = st.toggle("🔄 开启盘中秒级自动盯盘刷新", value=True)
-    live_interval = st.slider("动态刷新频率 (秒)", 3, 30, 5, 1) if enable_auto_live else 60
-
-    st.divider()
-    st.header("🎯 实战风控与回测参数")
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>🎯 风控与仓位规则</div>", unsafe_allow_html=True)
     enable_meltdown_guard = st.checkbox("🛑 开启【大盘极端恶劣强制空仓熔断】", value=True)
     max_risk_cny = st.slider("单笔最大可承受风险金额 (元)", 100, 1000, 300, 50)
     max_budget_per_stock = st.slider("单票买入上限金额 (元)", 5000, 30000, 15000, 1000)
     enable_strict_vwap = st.checkbox("🛡️ 开启【分时均线承接与上影线过滤】", value=True)
     display_top_n = st.slider("最终呈现上限 (只)", 3, 60, 30, 1)
     deep_sample_size = st.slider("深度分析样本量 (只)", 100, 1500, 500, 50)
-
-    if "3️⃣" in strategy_mode:
-        min_scan_pct, max_scan_pct = 2.8, 5.2
-    elif "4️⃣" in strategy_mode:
-        min_scan_pct, max_scan_pct = 1.5, 7.0
-    else:
-        max_scan_pct = st.slider("日内最大涨幅上限 (%)", 1.0, 9.5, 5.5, 0.1)
-        min_scan_pct = st.slider("日内最小涨幅下限 (%)", -7.0, 2.0, -4.0, 0.1)
 
     enable_ultra_filter = st.checkbox("💎 开启【盈亏比与趋势】过滤", value=True)
     min_risk_reward = st.slider("最低盈亏比门槛", 1.2, 3.5, 1.8, 0.1) if (enable_ultra_filter and "3️⃣" not in strategy_mode) else 1.0
@@ -406,75 +565,7 @@ with st.sidebar:
     min_amount = st.slider("最低日成交额门槛 (万元)", 500, 30000, 1500, 500)
     exclude_limit_up = st.checkbox("🚫 剔除涨停封板股票", value=True)
 
-# ==================== 大盘宏观风控 ====================
-def fetch_realtime_macro_deep():
-    url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
-    macro_info = {
-        "sh_pct": 0.0, "sh_price": 3100.0, "sh_amt_yi": 0.0,
-        "sz_pct": 0.0, "sz_price": 10000.0, "sz_amt_yi": 0.0,
-        "cy_pct": 0.0, "cy_price": 2000.0,
-        "total_amt_yi": 0.0, "up_count": 0, "down_count": 0, "flat_count": 0,
-        "status_color": "🟢", "status_text": "安全进攻区",
-        "suggest_position": "60% ~ 80%",
-        "action_guide": "大盘处于活跃可操作区间，可积极参与主力蓄势与强势突破标的。",
-        "market_score": 12, "is_meltdown": False,
-        "update_time": datetime.now().strftime("%H:%M:%S")
-    }
-    try:
-        resp = requests.get(url_tx, timeout=2.0)
-        for line in resp.text.strip().split(";"):
-            if "s_sh000001" in line and "=" in line:
-                parts = line.split("=")[1].strip('"').split("~")
-                if len(parts) >= 6:
-                    p = float(parts[2] or 0)
-                    if p > 100: macro_info["sh_price"] = p
-                    macro_info["sh_pct"] = float(parts[5] or 0)
-                    macro_info["sh_amt_yi"] = round(float(parts[7] or 0) / 10000, 1) if len(parts) > 7 else 0.0
-            elif "s_sz399001" in line and "=" in line:
-                parts = line.split("=")[1].strip('"').split("~")
-                if len(parts) >= 6:
-                    macro_info["sz_price"] = float(parts[2] or 0)
-                    macro_info["sz_pct"] = float(parts[5] or 0)
-                    macro_info["sz_amt_yi"] = round(float(parts[7] or 0) / 10000, 1) if len(parts) > 7 else 0.0
-            elif "s_sz399006" in line and "=" in line:
-                parts = line.split("=")[1].strip('"').split("~")
-                if len(parts) >= 6:
-                    macro_info["cy_price"] = float(parts[2] or 0)
-                    macro_info["cy_pct"] = float(parts[5] or 0)
-        macro_info["total_amt_yi"] = round(macro_info["sh_amt_yi"] + macro_info["sz_amt_yi"], 1)
-    except Exception:
-        pass
-
-    try:
-        url_em = "https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f104,f105,f106&secids=1.000001,0.399001"
-        r_em = requests.get(url_em, timeout=2.0).json()
-        diff = r_em.get("data", {}).get("diff", [])
-        if diff:
-            macro_info["up_count"] = sum(int(x.get("f104", 0) or 0) for x in diff)
-            macro_info["down_count"] = sum(int(x.get("f105", 0) or 0) for x in diff)
-            macro_info["flat_count"] = sum(int(x.get("f106", 0) or 0) for x in diff)
-    except Exception:
-        macro_info["up_count"], macro_info["down_count"], macro_info["flat_count"] = 2800, 2100, 150
-
-    sh_pct = macro_info["sh_pct"]
-    down_cnt = macro_info["down_count"]
-
-    if down_cnt >= 3600 or sh_pct <= -1.8:
-        macro_info.update({
-            "status_color": "🛑", "status_text": "系统级空仓熔断 (泥沙俱下)",
-            "suggest_position": "0% (强制空仓)",
-            "action_guide": "全市场大面积杀跌，主力资金全线撤退避险！系统已触发强制风控熔断，今日严禁开仓！",
-            "market_score": 4, "is_meltdown": True
-        })
-    elif sh_pct >= 0.3 and macro_info["up_count"] > down_cnt:
-        macro_info.update({"status_color": "🟢", "status_text": "多头进攻周期", "suggest_position": "70% ~ 90%", "action_guide": "大盘赚钱效应极佳，顺势重仓做主线，利润依托5日线奔跑。", "market_score": 15})
-    elif -0.8 <= sh_pct < 0.3:
-        macro_info.update({"status_color": "🟡", "status_text": "震荡分歧周期", "suggest_position": "40% ~ 55%", "action_guide": "大盘轮动快，严控追高，仅在主力底线附近分批低吸，有浮盈及时落袋。", "market_score": 10})
-    else:
-        macro_info.update({"status_color": "🔴", "status_text": "弱势防守区", "suggest_position": "10% ~ 30%", "action_guide": "大盘震荡走弱，个股分化，轻仓或空仓防守！", "market_score": 7})
-
-    return macro_info
-
+# ==================== 顶部大盘全景动态看板 (白底渲染) ====================
 @st.fragment(run_every=live_interval if enable_auto_live else None)
 def render_live_macro_header():
     macro = fetch_realtime_macro_deep()
@@ -484,30 +575,33 @@ def render_live_macro_header():
     c3.metric("🏛️ 创业板指", f"{macro['cy_price']} 点", f"{macro['cy_pct']:+.2f}%")
     c4.metric("💰 两市总成交额", f"{macro['total_amt_yi']} 亿元", f"沪:{macro['sh_amt_yi']}亿 | 深:{macro['sz_amt_yi']}亿")
 
+    total = max(1, macro['up_count'] + macro['down_count'] + macro['flat_count'])
+    up_pct = round(macro['up_count'] / total * 100, 1)
+    down_pct = round(macro['down_count'] / total * 100, 1)
+
     info_col1, info_col2 = st.columns([2.2, 2.8])
     with info_col1:
-        total = max(1, macro['up_count'] + macro['down_count'] + macro['flat_count'])
         st.markdown(f"""
-        <div style="background-color:rgba(255,255,255,0.04); padding:10px 14px; border-radius:8px; border-left:4px solid #ff9800;">
-            <div style="font-size:14px; font-weight:bold; color:#ddd;">📊 全市场即时赚钱效应 ({macro['update_time']})：</div>
+        <div class="metric-card" style="border-left:4px solid #f59e0b;">
+            <div style="font-size:13px; font-weight:bold; color:#64748b;">📊 全市场即时赚钱效应 ({macro['update_time']})：</div>
             <div style="margin-top:6px; font-size:15px;">
-                <span style="color:#ef5350; font-weight:bold;">🔺 上涨: {macro['up_count']} 家 ({round(macro['up_count']/total*100,1)}%)</span> &nbsp;|&nbsp; 
-                <span style="color:#26a69a; font-weight:bold;">🔻 下跌: {macro['down_count']} 家 ({round(macro['down_count']/total*100,1)}%)</span>
+                <span style="color:#dc2626; font-weight:bold;">🔺 上涨: {macro['up_count']} ({up_pct}%)</span> &nbsp;|&nbsp; 
+                <span style="color:#16a34a; font-weight:bold;">🔻 下跌: {macro['down_count']} ({down_pct}%)</span>
             </div>
-            <div style="font-size:12px; color:#aaa; margin-top:4px;">建议总仓位：<b style="color:#00e676;">{macro['suggest_position']}</b> | 模式：<b style="color:#ffd600;">{market_clock_status}</b></div>
+            <div style="font-size:12px; color:#64748b; margin-top:4px;">建议总仓位：<b style="color:#2563eb;">{macro['suggest_position']}</b> | 模式：<b style="color:#f59e0b;">{market_clock_status}</b></div>
         </div>
         """, unsafe_allow_html=True)
 
     with info_col2:
         st.markdown(f"""
-        <div style="background-color:rgba(255,255,255,0.04); padding:10px 14px; border-radius:8px; border-left:4px solid {macro['status_color']=='🟢' and '#00e676' or (macro['status_color']=='🟡' and '#ffd600' or '#ff1744')};">
-            <div style="font-size:14px; font-weight:bold;">🧭 实时宏观风控指令：<span style="color:#ffd600;">{macro['status_text']}</span></div>
-            <div style="font-size:13px; color:#eee; margin-top:4px; line-height:1.4;">{macro['action_guide']}</div>
+        <div class="metric-card" style="border-left:4px solid {'#16a34a' if macro['status_color']=='🟢' else ('#f59e0b' if macro['status_color']=='🟡' else '#dc2626')};">
+            <div style="font-size:13px; font-weight:bold; color:#0f172a;">🧭 实时宏观风控指令：<span style="color:#d97706;">{macro['status_text']}</span></div>
+            <div style="font-size:13px; color:#475569; margin-top:4px; line-height:1.4;">{macro['action_guide']}</div>
         </div>
         """, unsafe_allow_html=True)
 
 render_live_macro_header()
-st.divider()
+st.write("")
 
 def generate_stock_codes(b_type: str):
     symbols = []
@@ -660,17 +754,17 @@ def diagnose_position_and_action(current_p, b_low, b_high, stop_loss, target_p, 
     bias5 = (current_p / ma5 - 1) * 100 if ma5 > 0 else 0
     dist_sl = (current_p - stop_loss) / current_p * 100
     if b_low <= current_p <= b_high * 1.008:
-        return "🟢 黄金买点区 (回踩支撑位)", "👉 尾盘分批建仓，破防守线止损", "#00e676"
+        return "🟢 黄金买点区 (回踩支撑位)", "👉 尾盘分批建仓，破防守线止损", "#16a34a"
     elif current_p > b_high * 1.008 and bias5 <= 3.5:
-        return "🟡 刚起跑临界点 (轻度突破)", "👉 盘中小幅回踩可打入底仓，切忌追高", "#ffd600"
+        return "🟡 刚起跑临界点 (轻度突破)", "👉 盘中小幅回踩可打入底仓，切忌追高", "#d97706"
     elif bias5 > 3.5:
-        return f"🟠 脱离成本超买区 (偏离MA5 {bias5:.1f}%)", "✋ 严禁追买！已有底仓等放量冲高止盈", "#ff9100"
+        return f"🟠 脱离成本超买区 (偏离MA5 {bias5:.1f}%)", "✋ 严禁追买！已有底仓等放量冲高止盈", "#ea580c"
     elif current_p < stop_loss:
-        return "🔴 跌破防守线 (破位区)", "🚨 坚决不买！若已持仓次日早盘冲高无条件清仓", "#ff1744"
+        return "🔴 跌破防守线 (破位区)", "🚨 坚决不买！若已持仓次日早盘冲高无条件清仓", "#dc2626"
     else:
-        return f"⚪ 蓄势防守区 (距止损仅 {dist_sl:.1f}%)", "👀 观察承接，不破支撑线可轻仓试探", "#e0e0e0"
+        return f"⚪ 蓄势防守区 (距止损仅 {dist_sl:.1f}%)", "👀 观察承接，不破支撑线可轻仓试探", "#64748b"
 
-# ==================== 策略 4 与 策略 3 判定 (含双阶刚性止盈锚点) ====================
+# ==================== 策略 4 与 策略 3 核心判定 ====================
 def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, sector_name: str, sec_stat: dict, risk_cny: int, budget_cny: int):
     close = df['收盘'].values
     highs = df['最高'].values
@@ -689,9 +783,8 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
     buy_low = round(max(ma10, close[-1] * 0.975), 2)
     buy_high = round(close[-1] * 1.015, 2)
 
-    # 双阶止盈价格锚点算定
-    target_lock = round(close[-1] * 1.025, 2)  # +2.5% 保本止盈锚点 (卖半仓)
-    target_max = round(close[-1] * 1.055, 2)   # +5.5% 极限冲高锚点 (全清仓)
+    target_lock = round(close[-1] * 1.025, 2)
+    target_max = round(close[-1] * 1.055, 2)
     rr_ratio = round((target_max - close[-1]) / max(0.01, close[-1] - stop_loss), 1)
 
     rec_shares = calculate_fixed_risk_shares(close[-1], stop_loss, risk_cny, budget_cny)
@@ -750,7 +843,7 @@ def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macr
     close = df['收盘'].values
     vols = df['成交量'].values
     n = len(df)
-    if n < 25 or not (2.8 <= pct <= 5.2) or not (2.8 <= turnover <= 10.5): return None
+    if n < 25: return None
 
     vol_today = vols[-1]
     vol_5d_avg = np.mean(vols[-6:-1]) if n >= 6 else vol_today
@@ -855,21 +948,31 @@ def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fun
 
 def draw_pro_kline(code, name, k_df, advice):
     recent = k_df.tail(45).copy()
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.72, 0.28])
-    fig.add_trace(go.Candlestick(x=recent['日期'], open=recent['开盘'], high=recent['最高'],
-                                 low=recent['最低'], close=recent['收盘'],
-                                 increasing_line_color='#ef5350', decreasing_line_color='#26a69a', name="K线"), row=1, col=1)
-    for ma_col, color, label in [('MA5', '#ff9800', 'MA5'), ('MA10', '#2196f3', 'MA10'), ('MA20', '#9c27b0', 'MA20')]:
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72, 0.28])
+    fig.add_trace(go.Candlestick(
+        x=recent['日期'], open=recent['开盘'], high=recent['最高'],
+        low=recent['最低'], close=recent['收盘'],
+        increasing_line_color='#dc2626', decreasing_line_color='#16a34a', name="K线"
+    ), row=1, col=1)
+    for ma_col, color, label in [('MA5', '#f59e0b', 'MA5'), ('MA10', '#2563eb', 'MA10'), ('MA20', '#8b5cf6', 'MA20')]:
         if ma_col in recent.columns:
             fig.add_trace(go.Scatter(x=recent['日期'], y=recent[ma_col], line=dict(color=color, width=1.4), name=label), row=1, col=1)
     b_low = advice.get("建议买入区间_低", recent['收盘'].iloc[-1] * 0.98)
     b_high = advice.get("建议买入区间_高", recent['收盘'].iloc[-1])
-    fig.add_hrect(y0=b_low, y1=b_high, fillcolor="rgba(0, 230, 118, 0.15)", line_width=0, annotation_text=f"🎯 买入区间: {b_low}~{b_high}", row=1, col=1)
-    fig.add_hline(y=advice["动态压力位"], line_dash="dot", line_color="#ff1744", annotation_text=f"极限止盈: {advice['动态压力位']}", row=1, col=1)
-    fig.add_hline(y=advice["动态支撑位"], line_dash="dash", line_color="#00e676", annotation_text=f"止损防守: {advice['动态支撑位']}", row=1, col=1)
-    vol_colors = ['#ef5350' if c >= o else '#26a69a' for c, o in zip(recent['收盘'], recent['开盘'])]
+    fig.add_hrect(y0=b_low, y1=b_high, fillcolor="rgba(37, 99, 235, 0.08)", line_width=0, annotation_text=f"🎯 买入区间: {b_low}~{b_high}", row=1, col=1)
+    fig.add_hline(y=advice["动态压力位"], line_dash="dot", line_color="#dc2626", annotation_text=f"极限止盈: {advice['动态压力位']}", row=1, col=1)
+    fig.add_hline(y=advice["动态支撑位"], line_dash="dash", line_color="#16a34a", annotation_text=f"防守底线: {advice['动态支撑位']}", row=1, col=1)
+    vol_colors = ['#dc2626' if c >= o else '#16a34a' for c, o in zip(recent['收盘'], recent['开盘'])]
     fig.add_trace(go.Bar(x=recent['日期'], y=recent['成交量'], marker_color=vol_colors, name="成交量"), row=2, col=1)
-    fig.update_layout(title=f"📈 {code} {name} (最新 {recent['收盘'].iloc[-1]} 元)", xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=35, b=10))
+    fig.update_layout(
+        title=f"📈 {code} {name} 日K趋势与均线支撑 (最新: {recent['收盘'].iloc[-1]} 元)",
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", font=dict(color="#0f172a"),
+        xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=45, b=10),
+        xaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
+        yaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
+        xaxis2=dict(showgrid=True, gridcolor='#f1f5f9'),
+        yaxis2=dict(showgrid=True, gridcolor='#f1f5f9')
+    )
     return fig
 
 # ==================== 扫描执行 ====================
@@ -954,7 +1057,7 @@ if scan_clicked:
     st.toast(f"⚡ 扫描完成！锁定 Top {len(hit_results)} 只真实主线标的，耗时 {elapsed} 秒", icon="🎉")
 
 # ==================== 结果看板与回测 ====================
-tab_view_select, tab_view_backtest, tab_view_portfolio = st.tabs(["🔥 AI 智能精选投研看板", "🔬 策略历史回测引擎 (验证胜率)", "💼 我的网页持仓/自选监控池"])
+tab_view_select, tab_view_backtest, tab_view_portfolio = st.tabs(["⚡ AI 智能精选投研看板", "🔬 策略历史回测引擎", "💼 专属持仓与盯盘池"])
 
 with tab_view_select:
     if st.session_state.get('scan_results'):
@@ -962,30 +1065,33 @@ with tab_view_select:
         kline_cache = st.session_state['kline_cache']
         res_df = pd.DataFrame(results)
 
-        st.subheader("👑 今日核心自选前三甲 (已锚定双止盈价格)")
+        st.markdown("<div style='font-size:17px; font-weight:bold; color:#0f172a; margin:14px 0 10px 0;'>👑 今日核心前三甲 (已锁定双止盈锚点与单笔风险)</div>", unsafe_allow_html=True)
         top3_cols = st.columns(min(3, len(results)))
         for idx, col in enumerate(top3_cols):
             r_item = results[idx]
             adv = r_item['advice']
             with col:
                 st.markdown(f"""
-                <div style="background-color:rgba(255,255,255,0.05); padding:14px; border-radius:8px; border-left:4px solid {adv['指令颜色']};">
-                    <div style="font-size:17px; font-weight:bold;">{r_item['评级']} {r_item['名称']} ({r_item['代码']}) <span style="font-size:12px; background-color:#2e7d32; padding:2px 6px; border-radius:4px; color:#fff; margin-left:6px;">{r_item['板块']}</span></div>
-                    <div style="font-size:13px; color:#ffd600; margin-top:4px;">🎯 <b>建议下单</b>：<span style="font-size:15px; font-weight:bold; color:#00e676;">{adv.get('建议下单股数','1000股')}</span> (止损锁定: {adv.get('单笔锁定风险金','300元')})</div>
-                    <div style="font-size:13px; color:#64b5f6; margin-top:2px;">💰 <b>刚性止盈锚点</b>：保本 {adv.get('保本止盈位','-')} | 极限 {adv.get('极限冲高位','-')}</div>
-                    <div style="font-size:14px; color:#00e676; margin-top:3px; font-weight:bold;">🎲 <b>买入胜率</b>：{adv['买入概率']} | <b>位置</b>：{adv['当前位置描述']}</div>
-                    <div style="font-size:12px; color:#eee; margin-top:6px; line-height:1.4;">💡 {r_item['为什么值得买']}</div>
+                <div class="metric-card" style="border-left:4px solid {adv['指令颜色']};">
+                    <div style="font-size:17px; font-weight:bold; color:#0f172a;">
+                        {r_item['评级']} {r_item['名称']} <span style="font-size:13px; color:#64748b;">({r_item['代码']})</span>
+                        <span style="font-size:11px; background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:4px; margin-left:6px; font-weight:600;">{r_item['板块']}</span>
+                    </div>
+                    <div style="font-size:13px; color:#d97706; margin-top:8px;">🎯 <b>建议下单</b>：<span style="font-size:15px; font-weight:bold; color:#16a34a;">{adv.get('建议下单股数','1000股')}</span> (止损风险锁定: {adv.get('单笔锁定风险金','300元')})</div>
+                    <div style="font-size:13px; color:#334155; margin-top:4px;">💰 <b>刚性止盈</b>：半仓 {adv.get('保本止盈位','-')} | 全清 {adv.get('极限冲高位','-')}</div>
+                    <div style="font-size:13px; color:#2563eb; margin-top:4px; font-weight:bold;">🎲 <b>胜率估算</b>：{adv['买入概率']} | <b>位置</b>：{adv['当前位置描述']}</div>
+                    <div style="font-size:12px; color:#64748b; margin-top:8px; line-height:1.4;">💡 {r_item['为什么值得买']}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-        st.divider()
+        st.write("")
         display_cols = ["评级", "代码", "名称", "板块", "建议股数", "锁定风险", "保本止盈(+2.5%)", "极限止盈(+5.5%)", "买入胜率", "最新价", "涨跌幅(%)", "综合评分"]
         st.dataframe(res_df[display_cols], use_container_width=True, hide_index=True)
 
-        st.subheader("📊 个股全景决策中枢 (分时承接 / 日K趋势 一键切换)")
+        st.markdown("<div style='font-size:17px; font-weight:bold; color:#0f172a; margin:20px 0 10px 0;'>📊 个股全景决策中枢 (分时微观 / 日K多头 联动切换)</div>", unsafe_allow_html=True)
         if not res_df.empty:
             selected_code = st.selectbox(
-                "选择要深度诊断的股票：",
+                "选择诊断标的：",
                 options=res_df["代码"].tolist(),
                 format_func=lambda x: f"[{next(r['板块'] for r in results if r['代码']==x)}] {x} - {next(r['名称'] for r in results if r['代码']==x)}"
             )
@@ -999,18 +1105,19 @@ with tab_view_select:
                 ce.metric("📦 建议下单股数", s_adv.get("建议下单股数", "1000 股"))
 
                 chart_view_mode = st.radio(
-                    "📈 选择图表视图：",
-                    ["⏱️ 实时分时走势图 (看白线现价与黄线均价承接)", "📊 日K线趋势图 (看MA均线与筹码区间)"],
+                    "视图切换：",
+                    ["⏱️ 实时分时走势图 (查看现价与均价黄线承接)", "📊 日K线趋势图 (查看均线系统与筹码)"],
                     horizontal=True
                 )
 
                 if "分时走势" in chart_view_mode:
                     prev_close_price = float(s_row_data.get('昨收', s_df['收盘'].iloc[-1]))
-                    with st.spinner("正在加载分钟级分时走势数据..."):
+                    with st.spinner("正在加载微观分时走势..."):
                         timeline_data = fetch_realtime_minute_timeline(selected_code, s_df)
                     st.plotly_chart(draw_pro_timeline(selected_code, s_name, timeline_data, prev_close_price), use_container_width=True)
                 else:
                     st.plotly_chart(draw_pro_kline(selected_code, s_name, s_df, s_adv), use_container_width=True)
+
     elif st.session_state.get('has_scanned'):
         st.warning("⚠️ 扫描池暂时为空，建议调宽参数重新扫描。")
     else:
@@ -1018,8 +1125,8 @@ with tab_view_select:
 
 # ==================== 策略历史回测引擎面板 ====================
 with tab_view_backtest:
-    st.subheader("🔬 策略实盘历史回测模拟引擎")
-    st.caption("回溯测试过去 60 个交易日中，该标的每次出现策略共振信号后，执行「尾盘买入 + 次日冲高止盈/跌破止损」的实战概率表现。")
+    st.markdown("<div style='font-size:18px; font-weight:bold; color:#0f172a; margin-bottom:6px;'>🔬 策略实盘历史回测模拟引擎</div>", unsafe_allow_html=True)
+    st.caption("回溯测试过去 60 个交易日中，该标的每次出现策略共振信号后，执行「尾盘买入 + 次日冲高止盈/跌破止损」的实战统计胜率。")
 
     bc1, bc2, bc3, bc4 = st.columns(4)
     with bc1:
@@ -1052,7 +1159,7 @@ with tab_view_backtest:
 
 # ==================== 网页持仓监控池 ====================
 with tab_view_portfolio:
-    st.subheader("💼 我的网页专属自选与持仓监控")
+    st.markdown("<div style='font-size:18px; font-weight:bold; color:#0f172a; margin-bottom:6px;'>💼 专属持仓与自选盯盘池</div>", unsafe_allow_html=True)
 
     @st.fragment(run_every=live_interval if enable_auto_live else None)
     def render_live_portfolio_panel():
