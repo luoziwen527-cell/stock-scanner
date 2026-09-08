@@ -11,13 +11,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 
-# 屏蔽代理环境
+# 彻底屏蔽代理环境
 for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
     os.environ.pop(k, None)
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化投研系统 v7.9 (高精分时+资金异动版)",
+    page_title="AI 智能主力量化投研系统 v7.9.1 (集成流通市值+高精分时版)",
     layout="wide",
     page_icon="📈"
 )
@@ -148,7 +148,7 @@ def get_market_trading_status():
 
 is_trading_live, market_clock_status = get_market_trading_status()
 
-# ==================== 宏观风控抓取 ====================
+# ==================== 大盘宏观风控抓取 ====================
 def fetch_realtime_macro_deep():
     url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
     macro_info = {
@@ -292,7 +292,7 @@ def fetch_money_flow_safe_batched(codes):
             continue
     return flow_map
 
-# ==================== 单只股票行情抓取 ====================
+# ==================== 实时单只股票行情抓取 (含精准流通市值) ====================
 def fetch_single_realtime_stock(code: str):
     clean_code = str(code).zfill(6)
     prefix = "sh" if clean_code.startswith("60") else "sz"
@@ -307,6 +307,8 @@ def fetch_single_realtime_stock(code: str):
         if len(fields) < 46:
             return None
         price = float(fields[3] or 0)
+        # 第 45 项为流通市值（万元），折算为亿元
+        mcap_yi = round(float(fields[45] or 0) / 10000, 1) if len(fields) > 45 and fields[45] else 50.0
         return {
             "代码": clean_code, "名称": fields[1], "最新价": price,
             "昨收": float(fields[4] or 0), "今开": float(fields[5] or 0),
@@ -315,6 +317,7 @@ def fetch_single_realtime_stock(code: str):
             "成交额(万)": float(fields[37] or 0) if len(fields) > 37 and fields[37] else (float(fields[6] or 0) * price / 100),
             "换手率": float(fields[38] or 0) if len(fields) > 38 and fields[38] else 1.0,
             "成交量": float(fields[6] or 0),
+            "流通市值(亿)": mcap_yi,
             "PE": float(fields[39] or 0) if len(fields) > 39 and fields[39] else 0.0,
             "PB": float(fields[46] or 0) if len(fields) > 46 and fields[46] else 0.0
         }
@@ -342,8 +345,8 @@ def fetch_high_precision_timeline_em(code: str, prev_close: float = 0.0):
                 if len(parts) >= 8:
                     time_str = parts[0].split(" ")[-1][:5]
                     price = float(parts[2])
-                    vol = float(parts[5])      # 手
-                    amt = float(parts[6])      # 元
+                    vol = float(parts[5])
+                    amt = float(parts[6])
                     
                     cum_amt += amt
                     cum_vol += vol
@@ -550,6 +553,11 @@ with st.sidebar:
     max_scan_pct = st.slider("日内最大涨幅上限 (%)", 1.0, 10.0, 7.0 if "4️⃣" in strategy_mode else 5.2, 0.1)
 
     st.divider()
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>🏢 流通市值刚性约束 (亿元)</div>", unsafe_allow_html=True)
+    mcap_range = st.slider("流通市值区间 (亿元)", 10.0, 1000.0, (30.0, 350.0), 5.0, help="设在 30~350 亿可杜绝像京东方 A 这种 2000 亿大象股，保障超短弹性。")
+    min_mcap, max_mcap = mcap_range
+
+    st.divider()
     st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>📲 自动化微信推送</div>", unsafe_allow_html=True)
     enable_push = st.checkbox("🔔 尾盘扫描结果自动推送到微信", value=sys_config.get("enable_push", False))
     push_channel = st.selectbox("推送通道", ["PushPlus", "Server酱"], index=0 if sys_config.get("push_channel", "PushPlus") == "PushPlus" else 1)
@@ -560,7 +568,7 @@ with st.sidebar:
             st.error("请先输入 Token！")
         else:
             with st.spinner("正在发送测试推送..."):
-                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v7.9 高精分时版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
+                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v7.9.1 集成流通市值版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
                 if ok:
                     st.success("✅ 微信推送测试成功！")
                     sys_config.update({"enable_push": enable_push, "push_channel": push_channel, "push_token": push_token})
@@ -662,6 +670,10 @@ def fetch_tencent_batch(batch_symbols):
             name, code = fields[1], fields[2]
             price = float(fields[3] or 0)
             if price <= 0 or "ST" in name or "退" in name: continue
+            
+            # 精确抓取第 45 项流通市值
+            mcap_yi = round(float(fields[45] or 0) / 10000, 1) if len(fields) > 45 and fields[45] else 50.0
+
             items.append({
                 "代码": code, "名称": name, "最新价": price,
                 "昨收": float(fields[4] or 0), "今开": float(fields[5] or 0),
@@ -670,6 +682,7 @@ def fetch_tencent_batch(batch_symbols):
                 "成交额(万)": float(fields[37] or 0) if len(fields) > 37 and fields[37] else (float(fields[6] or 0) * price / 100),
                 "换手率": float(fields[38] or 0) if len(fields) > 38 and fields[38] else 1.0,
                 "成交量": float(fields[6] or 0),
+                "流通市值(亿)": mcap_yi,
                 "PE": float(fields[39] or 0) if len(fields) > 39 and fields[39] else 0.0,
                 "PB": float(fields[46] or 0) if len(fields) > 46 and fields[46] else 0.0
             })
@@ -678,7 +691,7 @@ def fetch_tencent_batch(batch_symbols):
     return items
 
 @st.cache_data(ttl=90)
-def get_all_realtime_stocks_tx(b_type: str, min_p: float, max_p: float, min_amt: float, no_limit: bool):
+def get_all_realtime_stocks_tx(b_type: str, min_p: float, max_p: float, min_amt: float, min_mcap_c: float, max_mcap_c: float, no_limit: bool):
     symbols = generate_stock_codes(b_type)
     batches = [symbols[i:i+100] for i in range(0, len(symbols), 100)]
     all_stocks = []
@@ -688,10 +701,19 @@ def get_all_realtime_stocks_tx(b_type: str, min_p: float, max_p: float, min_amt:
             if res: all_stocks.extend(res)
     df = pd.DataFrame(all_stocks)
     if df.empty: return df
+    
+    # 价格与成交额过滤
     df = df[(df['最新价'] >= min_p) & (df['最新价'] <= max_p)]
     if min_amt > 0:
         df_f = df[df['成交额(万)'] >= min_amt]
         if len(df_f) >= 20: df = df_f
+        
+    # 流通市值刚性过滤
+    if '流通市值(亿)' in df.columns:
+        df_m = df[(df['流通市值(亿)'] >= min_mcap_c) & (df['流通市值(亿)'] <= max_mcap_c)]
+        if len(df_m) >= 15:
+            df = df_m
+
     if no_limit: df = df[df['涨跌幅'] < 9.5]
     return df.drop_duplicates(subset=['代码']).reset_index(drop=True)
 
@@ -795,7 +817,7 @@ def diagnose_position_and_action(current_p, b_low, b_high, stop_loss, target_p, 
     else:
         return f"⚪ 蓄势防守区 (距止损仅 {dist_sl:.1f}%)", "👀 观察承接，不破支撑线可轻仓试探", "#64748b"
 
-# ==================== 核心策略评估 ====================
+# ==================== 策略判定 ====================
 def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, sector_name: str, sec_stat: dict, risk_cny: int, budget_cny: int):
     close = df['收盘'].values
     n = len(df)
@@ -829,15 +851,16 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
         net_wan, ratio, pos_desc, rr_ratio, 42, chip_info['width_70'], macro_status.get("market_score", 12), sector_rank_bonus
     )
 
+    mcap = row_data.get("流通市值(亿)", 50.0)
     if is_sector_strong and is_fund_strong and (close[-1] >= ma5):
         resonance_tag = "🔥🔥🔥 四重共振(主线领跑)"
         position_rule = f"{rec_shares} 股 (约{round(rec_shares*close[-1]/10000, 1)}万)"
-        why_buy_core = f"【四重共振达成】：所属行业【{sector_name}】集体走强；主力大单净流入 {net_wan} 万；站稳日内均价线且 K 线稳居 MA5 上方。"
+        why_buy_core = f"【四重共振】：行业【{sector_name}】走强；主力净买 {net_wan}万；流通市值 {mcap}亿 弹性佳；站稳均价线与MA5。"
         total_score = 95
     else:
         resonance_tag = "⚡⚡ 双重共振(梯队跟进)"
         position_rule = f"{max(100, int(rec_shares * 0.6 / 100) * 100)} 股 (试错底仓)"
-        why_buy_core = f"【双重共振】：行业【{sector_name}】有异动或主力资金介入，个股处于洗盘分歧期。"
+        why_buy_core = f"【双重共振】：行业【{sector_name}】有异动，主力介入，市值 {mcap}亿处于蓄势分歧期。"
         total_score = 82
 
     advice = {
@@ -847,6 +870,7 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
         "第一止盈目标": f"{target_max}", "止盈数值": target_max,
         "动态压力位": round(target_max, 2), "动态支撑位": round(ma10, 2),
         "ATR": round(atr, 3), "盈亏比": f"{rr_ratio} : 1",
+        "流通市值": f"{mcap} 亿元",
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
         "买入时段": "🌇 尾盘确认 (14:30-14:50)", "卖出时机": f"次日冲高 {target_lock} 出半仓，冲高 {target_max} 全清",
         "预估持股周期": "2 ~ 4 个交易日", "为什么值得买": why_buy_core,
@@ -857,7 +881,7 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
     }
     timing_dict = {
         "买点战术详情": [
-            f"📍 【共振级别】：{resonance_tag} | 建议买入：{rec_shares} 股",
+            f"📍 【共振级别】：{resonance_tag} | 建议买入：{rec_shares} 股 (市值 {mcap}亿)",
             f"🛡️ 【单笔亏损锁死】：跌破止损线 {stop_loss} 元，最大亏损锁死在约 {est_loss_cny} 元！",
             f"💰 【刚性止盈锚点1】：次日早盘触及 {target_lock} 元 (+2.5%) 自动卖出 50% 仓位保本锁盈！",
             f"🚀 【刚性止盈锚点2】：剩余持仓挂 {target_max} 元 (+5.5%) 自动全部止盈！",
@@ -901,6 +925,7 @@ def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macr
     ratio = flow_info.get("主力净占比", 0.0)
     b_prob, s_prob, flow_status, flow_reason = calculate_dynamic_win_rate(net_wan, ratio, pos_desc, rr_ratio, 45, chip_data['width_70'], macro_status.get("market_score", 12), sector_rank_bonus)
 
+    mcap = row_data.get("流通市值(亿)", 50.0)
     advice = {
         "建议买入区间": f"{buy_low} ~ {buy_high}", "建议买入区间_低": buy_low, "建议买入区间_高": buy_high,
         "建议止损位": f"{stop_loss_ma10} (破起涨开盘价清仓)", "止损数值": stop_loss_ma10,
@@ -908,17 +933,18 @@ def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macr
         "第一止盈目标": f"{target_max}", "止盈数值": target_max,
         "动态压力位": round(target_max, 2), "动态支撑位": round(ma10, 2),
         "ATR": round(close[-1] * 0.03, 3), "盈亏比": f"{rr_ratio} : 1",
+        "流通市值": f"{mcap} 亿元",
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
         "买入时段": "🌇 尾盘进场 (14:30 - 14:50)", "卖出时机": f"次日冲高 {target_lock} 出半仓，冲高 {target_max} 全清",
         "预估持股周期": "⚡ 顺势主升 (2 ~ 4 个交易日)",
-        "为什么值得买": f"温和放量 {vol_today / (vol_5d_avg + 1e-6):.1f} 倍涨 {pct:.1f}%，均线多头，70% 筹码集中度达 {chip_data['width_70']}%。",
+        "为什么值得买": f"温和放量 {vol_today / (vol_5d_avg + 1e-6):.1f}倍涨 {pct:.1f}%，流通市值 {mcap}亿弹性充沛，筹码集中度 {chip_data['width_70']}%。",
         "自适应仓位": f"{rec_shares} 股 (风控换算)", "当前位置描述": pos_desc,
         "具体操作指令": action_cmd, "指令颜色": action_color,
         "主力资金状态": flow_status, "买入概率": f"{b_prob}%", "卖出/风险概率": f"{s_prob}%"
     }
     timing_dict = {
         "买点战术详情": [
-            f"📍 【当前位置定位】：{pos_desc} | 建议买入：{rec_shares} 股",
+            f"📍 【当前位置定位】：{pos_desc} | 建议买入：{rec_shares} 股 (市值 {mcap}亿)",
             f"🛡️ 【单笔亏损锁死】：跌破止损线 {stop_loss_ma10} 元，单次损失严格锁死在约 {est_loss_cny} 元！",
             f"💰 【刚性止盈锚点1】：次日早盘冲高 {target_lock} 元 (+2.5%) 自动卖出 50% 仓位锁住利润！",
             f"🚀 【刚性止盈锚点2】：剩余持仓挂 {target_max} 元 (+5.5%) 自动全部止盈！",
@@ -928,7 +954,7 @@ def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macr
     radar = {"主力异动": 19, "洗盘充分度": 18, "筹码沉淀": 20, "底部安全性": 17, "博弈胜率": int(b_prob * 0.2)}
     return 94, 45, 47, ["🔥 放量异动", "📈 均线多头", flow_status[:10]], advice, radar, timing_dict, chip_data, True, "🟢 低", 3.0
 
-# ==================== 单只股票深度诊断分析 ====================
+# ==================== 单只股票深度诊断分析 (含流通市值) ====================
 def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, risk_cny: int, budget_cny: int):
     code_clean = str(stock_code_input).strip().zfill(6)
     row_d = fetch_single_realtime_stock(code_clean)
@@ -946,6 +972,7 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
     else:
         res = evaluate_strategy_three_step_champion(k_df, row_d, macro_now, flow_info, risk_cny, budget_cny, 8)
 
+    mcap = row_d.get("流通市值(亿)", 50.0)
     if not res:
         c = float(k_df['收盘'].iloc[-1])
         ma5 = float(k_df['收盘'].rolling(5).mean().iloc[-1])
@@ -961,8 +988,9 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
             "建议止损位": f"{sl} (防守线)", "止损数值": sl,
             "保本止盈位": f"{t_lock} (+2.5%出半仓)", "极限冲高位": f"{t_max} (+5.5%全清仓)",
             "第一止盈目标": f"{t_max}", "止盈数值": t_max, "动态压力位": t_max, "动态支撑位": sl,
+            "流通市值": f"{mcap} 亿元",
             "建议下单股数": f"{rec_s} 股", "单笔锁定风险金": f"约 {est_l} 元",
-            "为什么值得买": f"当前标的处于【{pos_desc}】，主力资金净流入 {flow_info.get('主力净流入',0)} 万，注意按支撑与止盈锚点操作。",
+            "为什么值得买": f"流通市值 {mcap}亿。当前标的处于【{pos_desc}】，主力资金净流入 {flow_info.get('主力净流入',0)} 万，注意按支撑与止盈锚点操作。",
             "自适应仓位": f"{rec_s} 股", "当前位置描述": pos_desc,
             "具体操作指令": action_cmd, "指令颜色": action_color,
             "主力资金状态": f"主力净流入: {flow_info.get('主力净流入',0)}万", "买入概率": "58%"
@@ -980,6 +1008,7 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
     res_item = {
         "代码": code_clean, "名称": row_d['名称'], "板块": sector_name, "评级": star_rating,
         "最新价": float(k_df['收盘'].iloc[-1]), "涨跌幅(%)": float(row_d.get('涨跌幅', 0)),
+        "流通市值(亿)": mcap,
         "advice": advice, "k_df": k_df, "row_data": row_d
     }
     return res_item, None
@@ -1013,6 +1042,7 @@ def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fun
 
     return {
         "代码": code, "名称": name, "板块": sector_name, "评级": star_rating,
+        "流通市值(亿)": row_data.get("流通市值(亿)", 50.0),
         "当前位置": advice.get("当前位置描述", "蓄势区"),
         "建议股数": advice.get("建议下单股数", "1000 股"),
         "锁定风险": advice.get("单笔锁定风险金", "约 300 元"),
@@ -1050,7 +1080,7 @@ def draw_pro_kline(code, name, k_df, advice):
     vol_colors = ['#dc2626' if c >= o else '#16a34a' for c, o in zip(recent['收盘'], recent['开盘'])]
     fig.add_trace(go.Bar(x=recent['日期'], y=recent['成交量'], marker_color=vol_colors, name="成交量"), row=2, col=1)
     fig.update_layout(
-        title=f"📈 {code} {name} 日K趋势与均线支撑 (最新: {recent['收盘'].iloc[-1]} 元)",
+        title=f"📈 {code} {name} 日K趋势与均线支撑 (最新: {recent['收盘'].iloc[-1]} 元 | 流通市值: {advice.get('流通市值','-')})",
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", font=dict(color="#0f172a"),
         xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=45, b=10),
         xaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
@@ -1072,10 +1102,10 @@ else:
 if scan_clicked:
     t_start = time.time()
     macro_now = macro_check
-    with st.spinner("正在全景扫描主板流动性标的池..."):
-        pool = get_all_realtime_stocks_tx(board_type, min_price, max_price, min_amount, exclude_limit_up)
+    with st.spinner("正在全景扫描主板标的池并按流通市值初筛..."):
+        pool = get_all_realtime_stocks_tx(board_type, min_price, max_price, min_amount, min_mcap, max_mcap, exclude_limit_up)
     if len(pool) == 0:
-        st.error("❌ 标的池初筛为空，请调宽左侧参数。")
+        st.error("❌ 标的池初筛为空，请调宽左侧流通市值或涨幅参数。")
         st.stop()
 
     candidates = pool[(pool['涨跌幅'] >= min_scan_pct) & (pool['涨跌幅'] <= max_scan_pct)].sort_values(
@@ -1130,7 +1160,7 @@ if scan_clicked:
         push_md += f"> 大盘状态：{macro_now['status_color']} {macro_now['status_text']} | 运行模式：{market_clock_status}\n\n"
         for i, item in enumerate(top_list):
             adv = item['advice']
-            push_md += f"**{i+1}. {item['名称']} ({item['代码']}) - 【{item['板块']}】**\n"
+            push_md += f"**{i+1}. {item['名称']} ({item['代码']}) - 【{item['板块']}】 - 市值: `{adv.get('流通市值','-')}`**\n"
             push_md += f"- 🎯 建议下单：**`{adv.get('建议下单股数','1000股')}`** (锁死亏损: `{adv.get('单笔锁定风险金','300元')}`)\n"
             push_md += f"- 🎯 建议买入区间：`{adv['建议买入区间']}`\n"
             push_md += f"- 🛡️ 铁律防守线：`{adv['建议止损位'].split(' ')[0]}` 元\n"
@@ -1170,11 +1200,14 @@ with tab_view_select:
     if st.session_state.get('custom_analysis_stock'):
         diag_item = st.session_state['custom_analysis_stock']
         d_adv = diag_item['advice']
+        mcap_val = diag_item.get('流通市值(亿)', 50.0)
+        mcap_tip = "🚀 小盘爆发弹性" if mcap_val <= 100 else ("⚖️ 中盘稳健主力" if mcap_val <= 300 else "🐘 大盘蓝筹钝化")
         st.markdown(f"""
         <div class="metric-card" style="border-left:5px solid {d_adv.get('指令颜色', '#2563eb')}; margin-bottom:16px;">
             <div style="font-size:18px; font-weight:bold; color:#0f172a;">
                 {diag_item['评级']} 诊断标的：{diag_item['名称']} <span style="font-size:14px; color:#64748b;">({diag_item['代码']})</span>
                 <span style="font-size:12px; background:#eff6ff; color:#2563eb; padding:3px 10px; border-radius:4px; margin-left:8px; font-weight:bold;">{diag_item['板块']}</span>
+                <span style="font-size:12px; background:#fef3c7; color:#d97706; padding:3px 10px; border-radius:4px; margin-left:6px; font-weight:bold;">流通市值: {mcap_val} 亿 ({mcap_tip})</span>
             </div>
             <div style="font-size:14px; color:#0f172a; margin-top:8px;">
                 🎯 <b>最新市价</b>：<b style="font-size:16px; color:#dc2626;">{diag_item['最新价']} 元</b> ({diag_item['涨跌幅(%)']:+.2f}%) &nbsp;|&nbsp; 
@@ -1206,7 +1239,8 @@ with tab_view_select:
                         {r_item['评级']} {r_item['名称']} <span style="font-size:13px; color:#64748b;">({r_item['代码']})</span>
                         <span style="font-size:11px; background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:4px; margin-left:6px; font-weight:600;">{r_item['板块']}</span>
                     </div>
-                    <div style="font-size:13px; color:#d97706; margin-top:8px;">🎯 <b>建议下单</b>：<span style="font-size:15px; font-weight:bold; color:#16a34a;">{adv.get('建议下单股数','1000股')}</span> (止损风险锁定: {adv.get('单笔锁定风险金','300元')})</div>
+                    <div style="font-size:13px; color:#d97706; margin-top:6px;">🏢 <b>流通市值</b>：<b style="color:#d97706;">{r_item.get('流通市值(亿)',50.0)} 亿元</b></div>
+                    <div style="font-size:13px; color:#16a34a; margin-top:2px;">🎯 <b>建议下单</b>：<b>{adv.get('建议下单股数','1000股')}</b> (锁定亏损: {adv.get('单笔锁定风险金','300元')})</div>
                     <div style="font-size:13px; color:#334155; margin-top:4px;">💰 <b>刚性止盈</b>：半仓 {adv.get('保本止盈位','-')} | 全清 {adv.get('极限冲高位','-')}</div>
                     <div style="font-size:13px; color:#2563eb; margin-top:4px; font-weight:bold;">🎲 <b>胜率估算</b>：{adv['买入概率']} | <b>位置</b>：{adv['当前位置描述']}</div>
                     <div style="font-size:12px; color:#64748b; margin-top:8px; line-height:1.4;">💡 {r_item['为什么值得买']}</div>
@@ -1214,7 +1248,7 @@ with tab_view_select:
                 """, unsafe_allow_html=True)
 
         st.write("")
-        display_cols = ["评级", "代码", "名称", "板块", "建议股数", "锁定风险", "保本止盈(+2.5%)", "极限止盈(+5.5%)", "买入胜率", "最新价", "涨跌幅(%)", "综合评分"]
+        display_cols = ["评级", "代码", "名称", "板块", "流通市值(亿)", "建议股数", "锁定风险", "保本止盈(+2.5%)", "极限止盈(+5.5%)", "买入胜率", "最新价", "涨跌幅(%)", "综合评分"]
         st.dataframe(res_df[display_cols], use_container_width=True, hide_index=True)
 
         st.markdown("<div style='font-size:17px; font-weight:bold; color:#0f172a; margin:20px 0 10px 0;'>📊 个股全景决策中枢 (高精分时异动 / 日K多头 联动切换)</div>", unsafe_allow_html=True)
@@ -1228,7 +1262,7 @@ with tab_view_select:
             selected_code = st.selectbox(
                 "选择诊断标的：",
                 options=all_select_options,
-                format_func=lambda x: f"[{kline_cache[x][6].get('板块', get_exact_industry_by_code(x)) if x in kline_cache else '自选'}] {x} - {kline_cache[x][0] if x in kline_cache else x}"
+                format_func=lambda x: f"[{kline_cache[x][6].get('板块', get_exact_industry_by_code(x)) if x in kline_cache else '自选'}] {x} - {kline_cache[x][0] if x in kline_cache else x} (市值:{kline_cache[x][6].get('流通市值(亿)', '-') if x in kline_cache else '-'}亿)"
             )
             if selected_code and selected_code in kline_cache:
                 s_name, s_df, s_adv, s_radar, s_timing, s_chip, s_row_data = kline_cache[selected_code]
@@ -1335,6 +1369,7 @@ with tab_view_portfolio:
             status = "🔴 跌破防守线 (坚决清仓)" if curr_p <= sl and curr_p > 0 else ("🟢 触及目标位 (分批止盈)" if curr_p >= tg and curr_p > 0 else f"🟡 正常持有 (距止损 {round((curr_p-sl)/curr_p*100,1) if curr_p>0 else 0}%)")
             p_display.append({
                 "代码": c, "名称": p['name'], "最新价": curr_p,
+                "流通市值": f"{real_d.get('流通市值(亿)', '-')}亿",
                 "今日涨跌幅(%)": real_d.get('涨跌幅', 0.0),
                 "主力实时净流入": f"{flow_map_p.get(c, {}).get('主力净流入', 0)}万",
                 "建议买入区间": p.get('buy_range', '-'), "铁律防守线": sl, "目标止盈价": tg, "实时状态": status
