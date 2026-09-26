@@ -17,7 +17,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化投研系统 v8.3.1",
+    page_title="AI 智能主力量化投研系统 v8.4 (周线SKDJ战法版)",
     layout="wide",
     page_icon="📈"
 )
@@ -80,7 +80,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== 本地配置管理 ====================
 CONFIG_FILE = "user_config.json"
 PORTFOLIO_FILE = "user_portfolio.json"
 
@@ -111,7 +110,6 @@ if 'has_scanned' not in st.session_state: st.session_state['has_scanned'] = Fals
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = load_portfolio()
 if 'custom_analysis_stock' not in st.session_state: st.session_state['custom_analysis_stock'] = None
 
-# ==================== 交易时钟判定 ====================
 def get_market_trading_status():
     now = datetime.now()
     weekday = now.weekday()
@@ -127,7 +125,6 @@ def get_market_trading_status():
 
 is_trading_live, market_clock_status = get_market_trading_status()
 
-# ==================== 大盘宏观风控抓取 ====================
 def fetch_realtime_macro_deep():
     url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
     macro_info = {
@@ -172,30 +169,28 @@ def fetch_realtime_macro_deep():
         if diff:
             macro_info["up_count"] = sum(int(x.get("f104", 0) or 0) for x in diff)
             macro_info["down_count"] = sum(int(x.get("f105", 0) or 0) for x in diff)
-            macro_info["flat_count"] = sum(int(x.get("f106", 0) or 0) for x in diff)
     except Exception:
-        macro_info["up_count"], macro_info["down_count"], macro_info["flat_count"] = 2800, 2100, 150
+        macro_info["up_count"], macro_info["down_count"] = 2800, 2100
 
     sh_pct = macro_info["sh_pct"]
     down_cnt = macro_info["down_count"]
 
     if down_cnt >= 3600 or sh_pct <= -1.8:
         macro_info.update({
-            "status_color": "🛑", "status_text": "系统级空仓熔断 (泥沙俱下)",
+            "status_color": "🛑", "status_text": "系统级空仓熔断",
             "suggest_position": "0% (强制空仓)",
             "action_guide": "全市场大面积杀跌，主力资金全线撤退避险！系统已触发强制风控熔断，今日严禁开仓！",
             "market_score": 4, "is_meltdown": True
         })
-    elif sh_pct >= 0.3 and macro_info["up_count"] > down_cnt:
+    elif sh_pct >= 0.3:
         macro_info.update({"status_color": "🟢", "status_text": "多头进攻周期", "suggest_position": "70% ~ 90%", "action_guide": "大盘赚钱效应极佳，顺势重仓做主线，利润依托5日线奔跑。", "market_score": 15})
     elif -0.8 <= sh_pct < 0.3:
-        macro_info.update({"status_color": "🟡", "status_text": "震荡分歧周期", "suggest_position": "40% ~ 55%", "action_guide": "大盘轮动快，严控追高，仅在主力底线附近分批低吸，有浮盈及时落袋。", "market_score": 10})
+        macro_info.update({"status_color": "🟡", "status_text": "震荡分歧周期", "suggest_position": "40% ~ 55%", "action_guide": "大盘轮动快，严控追高，仅在主力底线附近分批低吸。", "market_score": 10})
     else:
         macro_info.update({"status_color": "🔴", "status_text": "弱势防守区", "suggest_position": "10% ~ 30%", "action_guide": "大盘震荡走弱，个股分化，轻仓或空仓防守！", "market_score": 7})
 
     return macro_info
 
-# ==================== 微信推送引擎 ====================
 def send_wechat_push(title: str, content_markdown: str, push_token: str, push_channel: str = "PushPlus"):
     if not push_token or not push_token.strip(): return False, "未配置推送 Token"
     token = push_token.strip()
@@ -210,7 +205,6 @@ def send_wechat_push(title: str, content_markdown: str, push_token: str, push_ch
     except Exception as e:
         return False, str(e)
 
-# ==================== 行业直查 ====================
 @st.cache_data(ttl=86400 * 30)
 def get_exact_industry_by_code(code: str) -> str:
     clean_code = str(code).zfill(6)
@@ -320,10 +314,11 @@ def draw_pro_timeline_advanced(code, name, timeline_df, prev_close):
 
     latest_p = timeline_df['现价'].iloc[-1]
     latest_vwap = timeline_df['均价'].iloc[-1]
+    is_above = latest_p >= latest_vwap
     surge_count = int(timeline_df['异动'].sum())
 
     fig.update_layout(
-        title=f"⏱️ {code} {name} 高精分时盘口 (现价: {latest_p}元 | 均线: {latest_vwap}元 | {'🟢 均线上方稳健' if latest_p >= latest_vwap else '🔴 均线下方承压'} | ⚡ 监测到 {surge_count} 次主力资金放量异动)",
+        title=f"⏱️ {code} {name} 高精分时盘口 (现价: {latest_p}元 | 均线: {latest_vwap}元 | {'🟢 均线上方稳健' if is_above else '🔴 均线下方承压'} | ⚡ 监测到 {surge_count} 次主力异动)",
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", font=dict(color="#1e293b"),
         xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=45, b=10),
         xaxis=dict(showgrid=True, gridcolor='#f1f5f9'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
@@ -359,7 +354,7 @@ def calculate_dynamic_win_rate(net_main_wan, main_ratio, pos_desc, rr_ratio, qua
     base_score = 45.0 + min(15.0, (quality_score / 45.0) * 15.0)
     if chip_w70 < 15.0: base_score += 10.0
     if rr_ratio >= 2.0: base_score += 8.0
-    if "起爆" in pos_desc or "黄金买点" in pos_desc: base_score += 12.0
+    if "起爆" in pos_desc or "黄金买点" in pos_desc or "阳后阴买" in pos_desc: base_score += 12.0
     base_score += sector_rank_score
 
     flow_status = "🟡 资金平衡"
@@ -452,11 +447,12 @@ def get_all_realtime_stocks_tx(b_type: str, min_p: float, max_p: float, min_amt:
     if no_limit: df = df[df['涨跌幅'] < 9.5]
     return df.drop_duplicates(subset=['代码']).reset_index(drop=True)
 
-def fetch_kline_safe(code, row_data, days=60):
+# 抓取日K并合成真实周K (保证周线SKDJ计算准确)
+def fetch_kline_safe(code, row_data, days=90):
     market = "sh" if str(code).startswith("60") else "sz"
     url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market}{code},day,,,{days},qfq"
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.0)
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.2)
         raw = resp.json().get("data", {}).get(f"{market}{code}", {})
         raw_klines = raw.get("qfqday") or raw.get("day") or []
         if raw_klines and len(raw_klines) >= 10:
@@ -469,6 +465,129 @@ def fetch_kline_safe(code, row_data, days=60):
     p = float(row_data.get('最新价', 10))
     mock_dates = pd.date_range(end=datetime.today(), periods=30).strftime('%Y-%m-%d').tolist()
     return pd.DataFrame([{"日期": d, "开盘": p * 0.99, "收盘": p, "最高": p * 1.01, "最低": p * 0.98, "成交量": 15000.0, "涨跌幅": 0.5} for d in mock_dates])
+
+# ==================== 周线合成与SKDJ量化计算 ====================
+def calculate_weekly_skdj(daily_df, n=9, m=3):
+    if len(daily_df) < 15: return None
+    df = daily_df.copy()
+    df['日期'] = pd.to_datetime(df['日期'])
+    df = df.set_index('日期')
+    # 合成为周K线
+    w_df = df.resample('W-FRI').agg({
+        '开盘': 'first',
+        '最高': 'max',
+        '最低': 'min',
+        '收盘': 'last',
+        '成交量': 'sum'
+    }).dropna().reset_index()
+
+    if len(w_df) < 8: return None
+
+    # 计算周线 RSV
+    low_n = w_df['最低'].rolling(n).min()
+    high_n = w_df['最高'].rolling(n).max()
+    rsv = (w_df['收盘'] - low_n) / (high_n - low_n + 1e-6) * 100
+    rsv = rsv.fillna(50)
+
+    # 慢速平滑计算 K 与 D (SKDJ)
+    k_list, d_list = [50.0], [50.0]
+    for val in rsv:
+        new_k = (k_list[-1] * (m - 1) + val) / m
+        new_d = (d_list[-1] * (m - 1) + new_k) / m
+        k_list.append(new_k)
+        d_list.append(new_d)
+
+    w_df['SKDJ_K'] = k_list[1:]
+    w_df['SKDJ_D'] = d_list[1:]
+    w_df['MA5'] = w_df['收盘'].rolling(5).mean()
+    w_df['VOL_MA4'] = w_df['成交量'].rolling(4).mean()
+    return w_df
+
+# ==================== 策略 6：周线SKDJ顶底博弈战法 (阳后阴买/阴后阳卖) ====================
+def evaluate_strategy_weekly_skdj(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, risk_cny: int, budget_cny: int):
+    w_df = calculate_weekly_skdj(df)
+    if w_df is None or len(w_df) < 5: return None
+
+    curr_w = w_df.iloc[-1]
+    prev_w = w_df.iloc[-2]
+    current_p = curr_w['收盘']
+    mcap = row_data.get("流通市值(亿)", 50.0)
+
+    k_val, d_val = curr_w['SKDJ_K'], curr_w['SKDJ_D']
+    prev_k, prev_d = prev_w['SKDJ_K'], prev_w['SKDJ_D']
+
+    # 1. 低位买点判定 (阳后阴买)
+    is_low_zone = (k_val <= 38) or (prev_k <= 35 and k_val > d_val)
+    is_above_ma5 = current_p >= curr_w['MA5'] * 0.985
+    # 上周收实体阳线 (收盘 > 开盘)，本周收阴线调整 (收盘 <= 开盘) 或带长下影线回踩
+    is_yang_prev = prev_w['收盘'] > prev_w['开盘']
+    is_yin_now = curr_w['收盘'] <= curr_w['开盘'] * 1.01
+
+    is_buy_signal = is_low_zone and is_above_ma5 and is_yang_prev and is_yin_now
+
+    # 2. 高位卖点判定 (阴后阳卖 & 巨量避险)
+    is_high_zone = (k_val >= 75)
+    is_vol_burst = curr_w['成交量'] > curr_w['VOL_MA4'] * 2.0
+    upper_shadow = curr_w['最高'] - max(curr_w['开盘'], curr_w['收盘'])
+    is_shadow_risk = (upper_shadow / (curr_w['最高'] - curr_w['最低'] + 1e-6)) > 0.35
+
+    # 高位阴后阳卖
+    is_yin_prev = prev_w['收盘'] < prev_w['开盘']
+    is_yang_now = curr_w['收盘'] > curr_w['开盘']
+    is_sell_signal = is_high_zone and is_yin_prev and is_yang_now
+
+    score = 65
+    if is_buy_signal:
+        score = 92
+        pos_desc = "🟢 周线SKDJ低位【阳后阴买】黄金回踩点"
+        action_cmd = "👉 周K线阳后调阴，稳踩周MA5，逢低建仓"
+        cmd_color = "#16a34a"
+    elif is_sell_signal or (is_high_zone and (is_vol_burst or is_shadow_risk)):
+        score = 45
+        pos_desc = "🛑 周线SKDJ高位【阴后阳卖/放量顶背离】避险区"
+        action_cmd = "🚨 高位弱反弹或放巨量，坚决减仓止盈"
+        cmd_color = "#dc2626"
+    elif k_val <= 42 and current_p >= curr_w['MA5']:
+        score = 80
+        pos_desc = "🟡 周线低位多头蓄势区"
+        action_cmd = "👀 观察周线承接，逢阴线小仓潜伏"
+        cmd_color = "#d97706"
+    else:
+        return None
+
+    stop_loss = round(min(curr_w['最低'], curr_w['MA5'] * 0.97), 2)
+    target_lock = round(current_p * 1.04, 2)
+    target_max = round(current_p * 1.09, 2)
+    rr_ratio = round((target_max - current_p) / max(0.01, current_p - stop_loss), 1)
+
+    rec_shares = calculate_fixed_risk_shares(current_p, stop_loss, risk_cny, budget_cny)
+    est_loss_cny = round(rec_shares * (current_p - stop_loss), 1)
+    chip_data = calculate_precise_chip_concentration(df, current_p)
+
+    net_wan = flow_info.get("主力净流入", 0.0)
+    flow_status = "🟢 主力买入" if net_wan > 0 else "🟡 资金平衡"
+
+    advice = {
+        "建议买入区间": f"{round(curr_w['MA5'], 2)} ~ {round(current_p * 1.015, 2)}",
+        "建议买入区间_低": round(curr_w['MA5'], 2), "建议买入区间_高": round(current_p * 1.015, 2),
+        "建议止损位": f"{stop_loss} (周MA5跌破防守)", "止损数值": stop_loss,
+        "保本止盈位": f"{target_lock} (+4.0%出半仓)", "极限冲高位": f"{target_max} (+9.0%波段止盈)",
+        "第一止盈目标": f"{target_max}", "止盈数值": target_max,
+        "动态压力位": target_max, "动态支撑位": stop_loss,
+        "ATR": round(current_p * 0.03, 3), "盈亏比": f"{rr_ratio} : 1",
+        "流通市值": f"{mcap} 亿元",
+        "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
+        "买入时段": "🌇 周五尾盘确认 (14:30 - 14:50)", "卖出时机": "周线遇阻或触发高位阴后阳卖时果断了结",
+        "预估持股周期": "📅 周线大波段 (1 ~ 3 周)",
+        "为什么值得买": f"周线 SKDJ (K:{k_val:.1f}, D:{d_val:.1f})，处于{'低位金叉区' if k_val<=40 else '高位风险区'}，依托周MA5做大级别波段。",
+        "自适应仓位": f"{rec_shares} 股", "当前位置描述": pos_desc,
+        "具体操作指令": action_cmd, "指令颜色": cmd_color,
+        "主力资金状态": flow_status, "买入概率": f"{min(95, score)}%", "卖出/风险概率": f"{max(5, 100-score)}%"
+    }
+
+    timing_dict = {"买点战术详情": [f"📍 战术：{pos_desc}", f"🛡️ 单笔锁死亏损：约 {est_loss_cny} 元"]}
+    radar = {"主力异动": 18, "洗盘充分度": 20, "筹码沉淀": 19, "底部安全性": 19, "博弈胜率": int(score * 0.2)}
+    return score, 48, 48, ["🎯 周线SKDJ", "🌊 阳后阴买"], advice, radar, timing_dict, chip_data, True, "🟢 低", rr_ratio
 
 # ==================== 策略 5：超跌腰斩+均线极致粘合起爆战法 ====================
 def evaluate_strategy_bottom_squeeze_burst(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, risk_cny: int, budget_cny: int):
@@ -688,7 +807,9 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
     sector_name = get_exact_industry_by_code(code_clean)
     sec_stat = {"avg_pct": 1.2, "strong_count": 3}
 
-    if "5️⃣" in strategy_choice:
+    if "6️⃣" in strategy_choice:
+        res = evaluate_strategy_weekly_skdj(k_df, row_d, macro_now, flow_info, risk_cny, budget_cny)
+    elif "5️⃣" in strategy_choice:
         res = evaluate_strategy_bottom_squeeze_burst(k_df, row_d, macro_now, flow_info, risk_cny, budget_cny)
     elif "4️⃣" in strategy_choice:
         res = evaluate_strategy_quad_resonance(k_df, row_d, macro_now, flow_info, sector_name, sec_stat, risk_cny, budget_cny)
@@ -736,7 +857,7 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
     }
     return res_item, None
 
-# ==================== 工作任务分发 (45线程高吞吐无死锁引擎) ====================
+# ==================== 工作任务分发 (45线程高吞吐无死锁) ====================
 def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fundamental, macro_status, min_rr, flow_map, enable_strict_filter, sector_stats, risk_cny, budget_cny):
     k_df = fetch_kline_safe(code, row_data, days=60)
     last_close = float(k_df['收盘'].iloc[-1])
@@ -744,7 +865,9 @@ def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fun
     flow_info = flow_map.get(str(code).zfill(6), {"主力净流入": 0.0, "主力净占比": 0.0})
     sector_name = "主板制造"
 
-    if "5️⃣" in strategy_choice:
+    if "6️⃣" in strategy_choice:
+        res = evaluate_strategy_weekly_skdj(k_df, row_data, macro_status, flow_info, risk_cny, budget_cny)
+    elif "5️⃣" in strategy_choice:
         res = evaluate_strategy_bottom_squeeze_burst(k_df, row_data, macro_status, flow_info, risk_cny, budget_cny)
     elif "4️⃣" in strategy_choice:
         res = evaluate_strategy_quad_resonance(k_df, row_data, macro_status, flow_info, sector_name, sector_stats, risk_cny, budget_cny)
@@ -809,12 +932,13 @@ def draw_pro_kline(code, name, k_df, advice):
     )
     return fig
 
-# ==================== 侧边栏配置 (1500深度样本与完整策略) ====================
+# ==================== 侧边栏配置 (全套6大策略+1500深度样本) ====================
 with st.sidebar:
     st.markdown("<div style='font-size:18px; font-weight:bold; color:#0f172a; margin-bottom:12px;'>🔀 核心策略架构</div>", unsafe_allow_html=True)
     strategy_mode = st.selectbox(
         "当前执行策略：",
         [
+            "6️⃣ 周线定乾坤：周线SKDJ顶底博弈策略 (阳后阴买/阴后阳卖)",
             "5️⃣ 核心独家：超跌腰斩+均线极致粘合起爆战法 (涨停前夕潜伏)",
             "4️⃣ 推文精髓：四重共振主线战法 (强化版·板块+龙头+资金+确定性加仓)",
             "3️⃣ 图片绝技：三步极选强势股闭环策略 (量异动+均线多头+高控盘筹码)",
@@ -826,8 +950,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>📊 选股日内涨幅设置</div>", unsafe_allow_html=True)
-    default_min = -3.0 if "5️⃣" in strategy_mode else (1.5 if "4️⃣" in strategy_mode else 2.5)
-    default_max = 8.0 if "5️⃣" in strategy_mode else (7.0 if "4️⃣" in strategy_mode else 5.2)
+    default_min = -3.0 if ("5️⃣" in strategy_mode or "6️⃣" in strategy_mode) else (1.5 if "4️⃣" in strategy_mode else 2.5)
+    default_max = 8.0 if ("5️⃣" in strategy_mode or "6️⃣" in strategy_mode) else (7.0 if "4️⃣" in strategy_mode else 5.2)
     min_scan_pct = st.slider("日内最小涨幅下限 (%)", -9.0, 5.0, default_min, 0.1)
     max_scan_pct = st.slider("日内最大涨幅上限 (%)", 1.0, 10.0, default_max, 0.1)
 
@@ -858,7 +982,7 @@ with st.sidebar:
         if not push_token: st.error("请先输入 Token！")
         else:
             with st.spinner("正在发送测试推送..."):
-                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v8.3.1 稳定版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
+                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v8.4 周线SKDJ版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
                 if ok:
                     st.success("✅ 微信推送测试成功！")
                     sys_config.update({"enable_push": enable_push, "push_channel": push_channel, "push_token": push_token})
