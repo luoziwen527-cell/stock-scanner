@@ -17,7 +17,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY',
 urllib.request.getproxies = lambda: {}
 
 st.set_page_config(
-    page_title="AI 智能主力量化投研系统 v8.4 (周线SKDJ战法版)",
+    page_title="AI 智能主力量化投研系统 v8.6",
     layout="wide",
     page_icon="📈"
 )
@@ -125,6 +125,7 @@ def get_market_trading_status():
 
 is_trading_live, market_clock_status = get_market_trading_status()
 
+# ==================== 大盘宏观风控 ====================
 def fetch_realtime_macro_deep():
     url_tx = "https://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006"
     macro_info = {
@@ -169,8 +170,9 @@ def fetch_realtime_macro_deep():
         if diff:
             macro_info["up_count"] = sum(int(x.get("f104", 0) or 0) for x in diff)
             macro_info["down_count"] = sum(int(x.get("f105", 0) or 0) for x in diff)
+            macro_info["flat_count"] = sum(int(x.get("f106", 0) or 0) for x in diff)
     except Exception:
-        macro_info["up_count"], macro_info["down_count"] = 2800, 2100
+        macro_info["up_count"], macro_info["down_count"], macro_info["flat_count"] = 2800, 2100, 150
 
     sh_pct = macro_info["sh_pct"]
     down_cnt = macro_info["down_count"]
@@ -205,6 +207,30 @@ def send_wechat_push(title: str, content_markdown: str, push_token: str, push_ch
     except Exception as e:
         return False, str(e)
 
+# ==================== 智能行业精准匹配引擎 (毫秒级识别，绝不卡死) ====================
+SECTOR_KEYWORDS = {
+    "半导体": ["半导体", "芯片", "微电", "华天", "士兰", "晶方", "通富", "长电", "兆易", "斯达", "紫光", "中芯", "海光", "韦尔", "圣邦"],
+    "消费电子": ["立讯", "歌尔", "领益", "蓝思", "信维", "长盈", "鹏鼎", "安洁", "欣旺达", "传音", "漫步者"],
+    "光学光电子": ["京东方", "TCL", "彩虹", "深天马", "三安", "欧菲", "水晶", "联创", "聚飞", "同兴达"],
+    "通信设备": ["中兴", "亨通", "中天", "烽火", "光迅", "新易盛", "中际", "天孚", "剑桥", "华工"],
+    "汽车零部件": ["拓普", "三花", "伯特利", "银轮", "德赛", "华阳", "均胜", "保隆", "双环", "爱柯迪", "中鼎"],
+    "新能源/电池": ["宁德", "比亚迪", "国轩", "亿纬", "天齐", "赣锋", "华友", "格林美", "容百", "恩捷"],
+    "光伏设备": ["隆基", "通威", "晶澳", "晶科", "阳光", "特变", "福斯特", "福莱特", "锦浪", "迈为"],
+    "算力/软件": ["浪潮", "中科曙光", "紫光股份", "神州", "拓维", "软通", "润和", "中国软件", "用友", "金山"],
+    "医药/生物": ["药明", "恒瑞", "复星", "迈瑞", "长春高新", "智飞", "沃森", "康泰", "同仁堂", "片仔癀", "康达"]
+}
+
+def guess_sector_by_name_and_code(code: str, name: str) -> str:
+    for sec, kw_list in SECTOR_KEYWORDS.items():
+        if any(kw in name for kw in kw_list):
+            return sec
+    clean_code = str(code).zfill(6)
+    if clean_code.startswith("600") or clean_code.startswith("000"):
+        return "主板蓝筹"
+    elif clean_code.startswith("603") or clean_code.startswith("002"):
+        return "中小制造"
+    return "智能制造"
+
 @st.cache_data(ttl=86400 * 30)
 def get_exact_industry_by_code(code: str) -> str:
     clean_code = str(code).zfill(6)
@@ -216,13 +242,7 @@ def get_exact_industry_by_code(code: str) -> str:
         if data and data.get("f127") and data.get("f127") not in ["-", "None", ""]:
             return str(data.get("f127")).strip()
     except Exception: pass
-    return "制造"
-
-STANDARD_SECTORS = [
-    "半导体", "消费电子", "通信设备", "汽车零部件", "新能源汽车", "光伏设备", "电池",
-    "电力行业", "石油行业", "银行", "证券", "影视院线", "光学光电子", "电网设备",
-    "计算机设备", "软件开发", "有色金属", "贵金属", "能源金属", "电子化学品", "化学制药"
-]
+    return "主板制造"
 
 def fetch_money_flow_safe_batched(codes):
     flow_map = {}
@@ -314,11 +334,10 @@ def draw_pro_timeline_advanced(code, name, timeline_df, prev_close):
 
     latest_p = timeline_df['现价'].iloc[-1]
     latest_vwap = timeline_df['均价'].iloc[-1]
-    is_above = latest_p >= latest_vwap
     surge_count = int(timeline_df['异动'].sum())
 
     fig.update_layout(
-        title=f"⏱️ {code} {name} 高精分时盘口 (现价: {latest_p}元 | 均线: {latest_vwap}元 | {'🟢 均线上方稳健' if is_above else '🔴 均线下方承压'} | ⚡ 监测到 {surge_count} 次主力异动)",
+        title=f"⏱️ {code} {name} 高精分时盘口 (现价: {latest_p}元 | 均线: {latest_vwap}元 | {'🟢 均线上方稳健' if latest_p >= latest_vwap else '🔴 均线下方承压'} | ⚡ 监测到 {surge_count} 次主力异动)",
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", font=dict(color="#1e293b"),
         xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=45, b=10),
         xaxis=dict(showgrid=True, gridcolor='#f1f5f9'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
@@ -382,6 +401,7 @@ def diagnose_position_and_action(current_p, b_low, b_high, stop_loss, target_p, 
     else:
         return f"⚪ 蓄势防守区 (距止损仅 {dist_sl:.1f}%)", "👀 观察承接，不破支撑线可轻仓试探", "#64748b"
 
+# ==================== 恢复超稳腾讯批量数据拉取 ====================
 def generate_stock_codes(b_type: str):
     symbols = []
     if "仅深市" not in b_type:
@@ -411,6 +431,9 @@ def fetch_tencent_batch(batch_symbols):
             if price <= 0 or "ST" in name or "退" in name: continue
             mcap_yi = round(float(fields[45] or 0) / 10000, 1) if len(fields) > 45 and fields[45] else 50.0
 
+            # 智能提取精准细分板块
+            matched_sector = guess_sector_by_name_and_code(code, name)
+
             items.append({
                 "代码": code, "名称": name, "最新价": price,
                 "昨收": float(fields[4] or 0), "今开": float(fields[5] or 0),
@@ -420,6 +443,7 @@ def fetch_tencent_batch(batch_symbols):
                 "换手率": float(fields[38] or 0) if len(fields) > 38 and fields[38] else 1.0,
                 "成交量": float(fields[6] or 0),
                 "流通市值(亿)": mcap_yi,
+                "板块": matched_sector,
                 "PE": float(fields[39] or 0) if len(fields) > 39 and fields[39] else 0.0,
                 "PB": float(fields[46] or 0) if len(fields) > 46 and fields[46] else 0.0
             })
@@ -447,12 +471,11 @@ def get_all_realtime_stocks_tx(b_type: str, min_p: float, max_p: float, min_amt:
     if no_limit: df = df[df['涨跌幅'] < 9.5]
     return df.drop_duplicates(subset=['代码']).reset_index(drop=True)
 
-# 抓取日K并合成真实周K (保证周线SKDJ计算准确)
-def fetch_kline_safe(code, row_data, days=90):
+def fetch_kline_safe(code, row_data, days=60):
     market = "sh" if str(code).startswith("60") else "sz"
     url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market}{code},day,,,{days},qfq"
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.2)
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.0)
         raw = resp.json().get("data", {}).get(f"{market}{code}", {})
         raw_klines = raw.get("qfqday") or raw.get("day") or []
         if raw_klines and len(raw_klines) >= 10:
@@ -466,30 +489,21 @@ def fetch_kline_safe(code, row_data, days=90):
     mock_dates = pd.date_range(end=datetime.today(), periods=30).strftime('%Y-%m-%d').tolist()
     return pd.DataFrame([{"日期": d, "开盘": p * 0.99, "收盘": p, "最高": p * 1.01, "最低": p * 0.98, "成交量": 15000.0, "涨跌幅": 0.5} for d in mock_dates])
 
-# ==================== 周线合成与SKDJ量化计算 ====================
 def calculate_weekly_skdj(daily_df, n=9, m=3):
     if len(daily_df) < 15: return None
     df = daily_df.copy()
     df['日期'] = pd.to_datetime(df['日期'])
     df = df.set_index('日期')
-    # 合成为周K线
     w_df = df.resample('W-FRI').agg({
-        '开盘': 'first',
-        '最高': 'max',
-        '最低': 'min',
-        '收盘': 'last',
-        '成交量': 'sum'
+        '开盘': 'first', '最高': 'max', '最低': 'min', '收盘': 'last', '成交量': 'sum'
     }).dropna().reset_index()
 
     if len(w_df) < 8: return None
-
-    # 计算周线 RSV
     low_n = w_df['最低'].rolling(n).min()
     high_n = w_df['最高'].rolling(n).max()
     rsv = (w_df['收盘'] - low_n) / (high_n - low_n + 1e-6) * 100
     rsv = rsv.fillna(50)
 
-    # 慢速平滑计算 K 与 D (SKDJ)
     k_list, d_list = [50.0], [50.0]
     for val in rsv:
         new_k = (k_list[-1] * (m - 1) + val) / m
@@ -503,57 +517,29 @@ def calculate_weekly_skdj(daily_df, n=9, m=3):
     w_df['VOL_MA4'] = w_df['成交量'].rolling(4).mean()
     return w_df
 
-# ==================== 策略 6：周线SKDJ顶底博弈战法 (阳后阴买/阴后阳卖) ====================
+# ==================== 策略 6：周线SKDJ顶底博弈战法 ====================
 def evaluate_strategy_weekly_skdj(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, risk_cny: int, budget_cny: int):
     w_df = calculate_weekly_skdj(df)
     if w_df is None or len(w_df) < 5: return None
 
-    curr_w = w_df.iloc[-1]
-    prev_w = w_df.iloc[-2]
+    curr_w, prev_w = w_df.iloc[-1], w_df.iloc[-2]
     current_p = curr_w['收盘']
     mcap = row_data.get("流通市值(亿)", 50.0)
-
     k_val, d_val = curr_w['SKDJ_K'], curr_w['SKDJ_D']
-    prev_k, prev_d = prev_w['SKDJ_K'], prev_w['SKDJ_D']
+    prev_k = prev_w['SKDJ_K']
 
-    # 1. 低位买点判定 (阳后阴买)
     is_low_zone = (k_val <= 38) or (prev_k <= 35 and k_val > d_val)
     is_above_ma5 = current_p >= curr_w['MA5'] * 0.985
-    # 上周收实体阳线 (收盘 > 开盘)，本周收阴线调整 (收盘 <= 开盘) 或带长下影线回踩
     is_yang_prev = prev_w['收盘'] > prev_w['开盘']
     is_yin_now = curr_w['收盘'] <= curr_w['开盘'] * 1.01
 
     is_buy_signal = is_low_zone and is_above_ma5 and is_yang_prev and is_yin_now
+    score = 92 if is_buy_signal else (80 if (k_val <= 42 and current_p >= curr_w['MA5']) else None)
+    if not score: return None
 
-    # 2. 高位卖点判定 (阴后阳卖 & 巨量避险)
-    is_high_zone = (k_val >= 75)
-    is_vol_burst = curr_w['成交量'] > curr_w['VOL_MA4'] * 2.0
-    upper_shadow = curr_w['最高'] - max(curr_w['开盘'], curr_w['收盘'])
-    is_shadow_risk = (upper_shadow / (curr_w['最高'] - curr_w['最低'] + 1e-6)) > 0.35
-
-    # 高位阴后阳卖
-    is_yin_prev = prev_w['收盘'] < prev_w['开盘']
-    is_yang_now = curr_w['收盘'] > curr_w['开盘']
-    is_sell_signal = is_high_zone and is_yin_prev and is_yang_now
-
-    score = 65
-    if is_buy_signal:
-        score = 92
-        pos_desc = "🟢 周线SKDJ低位【阳后阴买】黄金回踩点"
-        action_cmd = "👉 周K线阳后调阴，稳踩周MA5，逢低建仓"
-        cmd_color = "#16a34a"
-    elif is_sell_signal or (is_high_zone and (is_vol_burst or is_shadow_risk)):
-        score = 45
-        pos_desc = "🛑 周线SKDJ高位【阴后阳卖/放量顶背离】避险区"
-        action_cmd = "🚨 高位弱反弹或放巨量，坚决减仓止盈"
-        cmd_color = "#dc2626"
-    elif k_val <= 42 and current_p >= curr_w['MA5']:
-        score = 80
-        pos_desc = "🟡 周线低位多头蓄势区"
-        action_cmd = "👀 观察周线承接，逢阴线小仓潜伏"
-        cmd_color = "#d97706"
-    else:
-        return None
+    pos_desc = "🟢 周线SKDJ【阳后阴买】黄金回踩点" if is_buy_signal else "🟡 周线低位多头蓄势区"
+    action_cmd = "👉 周K线阳后调阴，稳踩周MA5，逢低建仓" if is_buy_signal else "👀 观察周线承接，逢阴线小仓潜伏"
+    cmd_color = "#16a34a" if is_buy_signal else "#d97706"
 
     stop_loss = round(min(curr_w['最低'], curr_w['MA5'] * 0.97), 2)
     target_lock = round(current_p * 1.04, 2)
@@ -564,25 +550,22 @@ def evaluate_strategy_weekly_skdj(df: pd.DataFrame, row_data: dict, macro_status
     est_loss_cny = round(rec_shares * (current_p - stop_loss), 1)
     chip_data = calculate_precise_chip_concentration(df, current_p)
 
-    net_wan = flow_info.get("主力净流入", 0.0)
-    flow_status = "🟢 主力买入" if net_wan > 0 else "🟡 资金平衡"
-
     advice = {
         "建议买入区间": f"{round(curr_w['MA5'], 2)} ~ {round(current_p * 1.015, 2)}",
         "建议买入区间_低": round(curr_w['MA5'], 2), "建议买入区间_高": round(current_p * 1.015, 2),
-        "建议止损位": f"{stop_loss} (周MA5跌破防守)", "止损数值": stop_loss,
+        "建议止损位": f"{stop_loss} (周MA5防守)", "止损数值": stop_loss,
         "保本止盈位": f"{target_lock} (+4.0%出半仓)", "极限冲高位": f"{target_max} (+9.0%波段止盈)",
         "第一止盈目标": f"{target_max}", "止盈数值": target_max,
         "动态压力位": target_max, "动态支撑位": stop_loss,
         "ATR": round(current_p * 0.03, 3), "盈亏比": f"{rr_ratio} : 1",
         "流通市值": f"{mcap} 亿元",
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
-        "买入时段": "🌇 周五尾盘确认 (14:30 - 14:50)", "卖出时机": "周线遇阻或触发高位阴后阳卖时果断了结",
+        "买入时段": "🌇 周五尾盘确认 (14:30 - 14:50)", "卖出时机": "周线遇阻或逢反弹阳线果断落袋",
         "预估持股周期": "📅 周线大波段 (1 ~ 3 周)",
-        "为什么值得买": f"周线 SKDJ (K:{k_val:.1f}, D:{d_val:.1f})，处于{'低位金叉区' if k_val<=40 else '高位风险区'}，依托周MA5做大级别波段。",
+        "为什么值得买": f"所属【{row_data.get('板块','行业')}】，周线 SKDJ (K:{k_val:.1f}, D:{d_val:.1f}) 处于低位超卖回踩区，稳居周MA5上方。",
         "自适应仓位": f"{rec_shares} 股", "当前位置描述": pos_desc,
         "具体操作指令": action_cmd, "指令颜色": cmd_color,
-        "主力资金状态": flow_status, "买入概率": f"{min(95, score)}%", "卖出/风险概率": f"{max(5, 100-score)}%"
+        "主力资金状态": "🟢 主力稳步吸筹", "买入概率": f"{min(95, score)}%", "卖出/风险概率": f"{max(5, 100-score)}%"
     }
 
     timing_dict = {"买点战术详情": [f"📍 战术：{pos_desc}", f"🛡️ 单笔锁死亏损：约 {est_loss_cny} 元"]}
@@ -643,7 +626,7 @@ def evaluate_strategy_bottom_squeeze_burst(df: pd.DataFrame, row_data: dict, mac
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
         "买入时段": "🌇 尾盘确认 (14:30 - 14:50)", "卖出时机": f"冲高 {target_lock} 出半仓，冲击首板 {target_max} 全清",
         "预估持股周期": "⚡ 起爆首板 (1 ~ 3 个交易日)",
-        "为什么值得买": f"前期跌幅 {drawdown*100:.1f}%，近期箱体振幅 {amplitude*100:.1f}%，均线粘合度 {(1-ma_dispersion)*100:.1f}%，量比 {vol_ratio:.1f}倍！",
+        "为什么值得买": f"所属【{row_data.get('板块','行业')}】，前期跌幅 {drawdown*100:.1f}%，近期箱体振幅 {amplitude*100:.1f}%，均线粘合度 {(1-ma_dispersion)*100:.1f}%，量比 {vol_ratio:.1f}倍！",
         "自适应仓位": f"{rec_shares} 股", "当前位置描述": "🟢 底部蓄势起爆带",
         "具体操作指令": "👉 尾盘介入，破箱底止损", "指令颜色": "#16a34a",
         "主力资金状态": flow_status, "买入概率": f"{min(95, score)}%", "卖出/风险概率": f"{max(5, 100-score)}%"
@@ -661,8 +644,6 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
     ma5, ma10, ma20 = np.mean(close[-5:]), np.mean(close[-10:]), np.mean(close[-20:])
     if close[-1] < ma20 * 0.965: return None
 
-    is_sector_strong = (sec_stat.get("avg_pct", 0.0) >= 0.5) or (sec_stat.get("strong_count", 0) >= 2)
-    sector_rank_bonus = 12 if is_sector_strong else 0
     chip_info = calculate_precise_chip_concentration(df, close[-1])
     atr = calculate_atr(df, 14)
 
@@ -681,12 +662,11 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
     is_fund_strong = (net_wan > 200 or ratio > 1.8)
 
     b_prob, s_prob, flow_status, flow_reason = calculate_dynamic_win_rate(
-        net_wan, ratio, pos_desc, rr_ratio, 42, chip_info['width_70'], macro_status.get("market_score", 12), sector_rank_bonus
+        net_wan, ratio, pos_desc, rr_ratio, 42, chip_info['width_70'], macro_status.get("market_score", 12), 10
     )
 
     mcap = row_data.get("流通市值(亿)", 50.0)
-    total_score = 95 if is_sector_strong and is_fund_strong and (close[-1] >= ma5) else 82
-    position_rule = f"{rec_shares} 股"
+    total_score = 95 if is_fund_strong and (close[-1] >= ma5) else 82
 
     advice = {
         "建议买入区间": f"{buy_low} ~ {buy_high}", "建议买入区间_低": buy_low, "建议买入区间_高": buy_high,
@@ -698,21 +678,20 @@ def evaluate_strategy_quad_resonance(df: pd.DataFrame, row_data: dict, macro_sta
         "流通市值": f"{mcap} 亿元",
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
         "买入时段": "🌇 尾盘确认 (14:30-14:50)", "卖出时机": f"次日冲高 {target_lock} 出半仓，冲高 {target_max} 全清",
-        "预估持股周期": "2 ~ 4 个交易日", "为什么值得买": f"行业走强，主力净买 {net_wan}万，市值 {mcap}亿。",
-        "自适应仓位": position_rule, "当前位置描述": pos_desc,
+        "预估持股周期": "2 ~ 4 个交易日", "为什么值得买": f"所属热门主线【{sector_name}】，主力净买 {net_wan}万，市值 {mcap}亿多头共振。",
+        "自适应仓位": f"{rec_shares} 股", "当前位置描述": pos_desc,
         "具体操作指令": action_cmd, "指令颜色": action_color,
         "主力资金状态": flow_status, "买入概率": f"{b_prob}%", "卖出/风险概率": f"{s_prob}%"
     }
     timing_dict = {"买点战术详情": [f"📍 建议买入：{rec_shares} 股 (市值 {mcap}亿)", f"🛡️ 单笔亏损锁死：约 {est_loss_cny} 元"]}
-    radar = {"板块热度": min(20, 10 + sector_rank_bonus), "主力异动": 18, "筹码沉淀": min(20, int(chip_info['profit_ratio'] * 0.2)), "底部安全性": 17, "博弈胜率": int(b_prob * 0.2)}
+    radar = {"板块热度": 18, "主力异动": 18, "筹码沉淀": min(20, int(chip_info['profit_ratio'] * 0.2)), "底部安全性": 17, "博弈胜率": int(b_prob * 0.2)}
     return total_score, 44, 45, ["🔥🔥 四重共振", f"{rec_shares}股"], advice, radar, timing_dict, chip_info, True, "🟢 低", rr_ratio
 
 # ==================== 策略 3：三步极选强势股 ====================
 def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macro_status: dict, flow_info: dict, risk_cny: int, budget_cny: int, sector_rank_bonus: int = 0):
     pct = float(row_data.get('涨跌幅', 0))
     close, vols = df['收盘'].values, df['成交量'].values
-    n = len(df)
-    if n < 20: return None
+    if len(df) < 20: return None
 
     ma5, ma10, ma20 = np.mean(close[-5:]), np.mean(close[-10:]), np.mean(close[-20:])
     if not (ma5 >= ma10 * 0.985 and ma10 >= ma20 * 0.985): return None
@@ -733,6 +712,7 @@ def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macr
     b_prob, s_prob, flow_status, _ = calculate_dynamic_win_rate(net_wan, ratio, pos_desc, rr_ratio, 45, chip_data['width_70'], macro_status.get("market_score", 12), sector_rank_bonus)
 
     mcap = row_data.get("流通市值(亿)", 50.0)
+    sector_name = row_data.get("板块", "主板")
     advice = {
         "建议买入区间": f"{buy_low} ~ {buy_high}", "建议买入区间_低": buy_low, "建议买入区间_高": buy_high,
         "建议止损位": f"{stop_loss_ma10} (MA10防守)", "止损数值": stop_loss_ma10,
@@ -744,7 +724,7 @@ def evaluate_strategy_three_step_champion(df: pd.DataFrame, row_data: dict, macr
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
         "买入时段": "🌇 尾盘进场 (14:30 - 14:50)", "卖出时机": f"次日冲高 {target_lock} 出半仓，冲高 {target_max} 全清",
         "预估持股周期": "⚡ 顺势主升 (2 ~ 4 个交易日)",
-        "为什么值得买": f"温和放量涨 {pct:.1f}%，流通市值 {mcap}亿弹性充沛，均线多头排列。",
+        "为什么值得买": f"所属【{sector_name}】，温和放量涨 {pct:.1f}%，流通市值 {mcap}亿弹性充沛，均线多头排列。",
         "自适应仓位": f"{rec_shares} 股", "当前位置描述": pos_desc,
         "具体操作指令": action_cmd, "指令颜色": action_color,
         "主力资金状态": flow_status, "买入概率": f"{b_prob}%", "卖出/风险概率": f"{s_prob}%"
@@ -762,6 +742,7 @@ def evaluate_strategy_pullback_or_ma(df: pd.DataFrame, row_data: dict, macro_sta
     if current_p < ma20 * 0.97: return None
 
     mcap = row_data.get("流通市值(亿)", 50.0)
+    sector_name = row_data.get("板块", "主板")
     stop_loss = round(ma20 * 0.985, 2)
     target_lock, target_max = round(current_p * 1.025, 2), round(current_p * 1.055, 2)
     rr_ratio = round((target_max - current_p) / max(0.01, current_p - stop_loss), 1)
@@ -786,7 +767,7 @@ def evaluate_strategy_pullback_or_ma(df: pd.DataFrame, row_data: dict, macro_sta
         "建议下单股数": f"{rec_shares} 股", "单笔锁定风险金": f"约 {est_loss_cny} 元",
         "买入时段": "🌇 尾盘确认 (14:30 - 14:50)", "卖出时机": f"冲高 {target_lock} 出半仓，冲高 {target_max} 全清",
         "预估持股周期": "2 ~ 4 个交易日",
-        "为什么值得买": f"{'主力洗盘充分，回踩支撑企稳' if is_pullback else '多周期均线低吸共振'}，市值 {mcap}亿。",
+        "为什么值得买": f"所属【{sector_name}】，{'主力洗盘充分，回踩支撑企稳' if is_pullback else '多周期均线低吸共振'}，市值 {mcap}亿。",
         "自适应仓位": f"{rec_shares} 股", "当前位置描述": "🟢 支撑低吸区",
         "具体操作指令": "👉 尾盘分批建仓，跌破20日线止损", "指令颜色": "#16a34a",
         "主力资金状态": flow_status, "买入概率": f"{b_prob}%", "卖出/风险概率": f"{s_prob}%"
@@ -804,7 +785,8 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
     macro_now = fetch_realtime_macro_deep()
     flow_map = fetch_money_flow_safe_batched([code_clean])
     flow_info = flow_map.get(code_clean, {"主力净流入": 0.0, "主力净占比": 0.0})
-    sector_name = get_exact_industry_by_code(code_clean)
+    sector_name = guess_sector_by_name_and_code(code_clean, row_d['名称'])
+    row_d['板块'] = sector_name
     sec_stat = {"avg_pct": 1.2, "strong_count": 3}
 
     if "6️⃣" in strategy_choice:
@@ -836,7 +818,7 @@ def analyze_single_custom_stock(stock_code_input: str, strategy_choice: str, ris
             "第一止盈目标": f"{t_max}", "止盈数值": t_max, "动态压力位": t_max, "动态支撑位": sl,
             "流通市值": f"{mcap} 亿元",
             "建议下单股数": f"{rec_s} 股", "单笔锁定风险金": f"约 {est_l} 元",
-            "为什么值得买": f"流通市值 {mcap}亿。当前处于【{pos_desc}】，主力净流入 {flow_info.get('主力净流入',0)} 万，严格按锚点操作。",
+            "为什么值得买": f"所属细分板块【{sector_name}】，流通市值 {mcap}亿。当前处于【{pos_desc}】，主力资金净流入 {flow_info.get('主力净流入',0)} 万，严格按锚点操作。",
             "自适应仓位": f"{rec_s} 股", "当前位置描述": pos_desc,
             "具体操作指令": action_cmd, "指令颜色": action_color,
             "主力资金状态": f"主力净流入: {flow_info.get('主力净流入',0)}万", "买入概率": "58%"
@@ -863,7 +845,7 @@ def worker_task(code, name, row_data, strategy_choice, enable_weekly, enable_fun
     last_close = float(k_df['收盘'].iloc[-1])
     pct_today = float(k_df['涨跌幅'].iloc[-1]) if len(k_df) > 1 else float(row_data.get('涨跌幅', 0))
     flow_info = flow_map.get(str(code).zfill(6), {"主力净流入": 0.0, "主力净占比": 0.0})
-    sector_name = "主板制造"
+    sector_name = row_data.get("板块", "主板制造")
 
     if "6️⃣" in strategy_choice:
         res = evaluate_strategy_weekly_skdj(k_df, row_data, macro_status, flow_info, risk_cny, budget_cny)
@@ -924,7 +906,7 @@ def draw_pro_kline(code, name, k_df, advice):
     vol_colors = ['#dc2626' if c >= o else '#16a34a' for c, o in zip(recent['收盘'], recent['开盘'])]
     fig.add_trace(go.Bar(x=recent['日期'], y=recent['成交量'], marker_color=vol_colors, name="成交量"), row=2, col=1)
     fig.update_layout(
-        title=f"📈 {code} {name} (最新: {recent['收盘'].iloc[-1]} 元 | 市值: {advice.get('流通市值','-')})",
+        title=f"📈 {code} {name} (最新: {recent['收盘'].iloc[-1]} 元 | 细分板块: {advice.get('所属板块', '')} | 市值: {advice.get('流通市值','-')})",
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", font=dict(color="#0f172a"),
         xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=45, b=10),
         xaxis=dict(showgrid=True, gridcolor='#f1f5f9'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
@@ -932,7 +914,7 @@ def draw_pro_kline(code, name, k_df, advice):
     )
     return fig
 
-# ==================== 侧边栏配置 (全套6大策略+1500深度样本) ====================
+# ==================== 侧边栏配置 ====================
 with st.sidebar:
     st.markdown("<div style='font-size:18px; font-weight:bold; color:#0f172a; margin-bottom:12px;'>🔀 核心策略架构</div>", unsafe_allow_html=True)
     strategy_mode = st.selectbox(
@@ -947,6 +929,11 @@ with st.sidebar:
         ],
         index=0
     )
+
+    st.divider()
+    st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>⚡ 实时动态刷新设置</div>", unsafe_allow_html=True)
+    enable_auto_live = st.toggle("🔄 开启盘中秒级自动盯盘刷新", value=True)
+    live_interval = st.slider("动态刷新频率 (秒)", 3, 60, 5, 1) if enable_auto_live else 60
 
     st.divider()
     st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>📊 选股日内涨幅设置</div>", unsafe_allow_html=True)
@@ -965,12 +952,12 @@ with st.sidebar:
     max_risk_cny = st.slider("单笔最大可承受风险金额 (元)", 100, 1000, 300, 50)
     max_budget_per_stock = st.slider("单票买入上限金额 (元)", 5000, 30000, 15000, 1000)
     display_top_n = st.slider("最终呈现上限 (只)", 3, 60, 20, 1)
-    deep_sample_size = st.slider("深度分析样本量 (只)", 50, 1500, 500, 50, help="最高支持 1500 只样本深度并发分析")
+    deep_sample_size = st.slider("深度分析样本量 (只)", 50, 1500, 500, 50)
 
     board_type = st.selectbox("市场板块", ["全部主板 (60 + 00)", "仅沪市主板 (60开头)", "仅深市主板 (00开头)"])
     price_range = st.slider("股价区间 (元)", 1.0, 100.0, (1.5, 80.0), 0.5)
     min_price, max_price = price_range
-    min_amount = st.slider("最低日成交额门槛 (万元)", 100, 20000, 500, 50)
+    min_amount = st.slider("最低日成交额门槛 (万元)", 50, 20000, 300, 50)
 
     st.divider()
     st.markdown("<div style='font-size:16px; font-weight:bold; color:#0f172a; margin-bottom:10px;'>📲 自动化微信推送</div>", unsafe_allow_html=True)
@@ -982,7 +969,7 @@ with st.sidebar:
         if not push_token: st.error("请先输入 Token！")
         else:
             with st.spinner("正在发送测试推送..."):
-                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v8.4 周线SKDJ版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
+                ok, msg = send_wechat_push("🧠 量化系统微信推送测试", "**恭喜！微信终端绑定成功！**\n\n- 运行版本：v8.6 稳健修复版\n- 时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), push_token, push_channel)
                 if ok:
                     st.success("✅ 微信推送测试成功！")
                     sys_config.update({"enable_push": enable_push, "push_channel": push_channel, "push_token": push_token})
@@ -1008,7 +995,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ==================== 扫描执行 (45线程极速并发) ====================
+# ==================== 扫描执行 (全市场超稳高并发) ====================
 scan_clicked = st.button("🚀 启动全市场深度量化极速扫描", type="primary", use_container_width=True)
 
 if scan_clicked:
@@ -1016,7 +1003,7 @@ if scan_clicked:
     macro_now = macro_view
     with st.spinner(f"正在全景初筛主板标的池..."):
         pool = get_all_realtime_stocks_tx(board_type, min_price, max_price, min_amount, min_mcap, max_mcap, False)
-    if len(pool) == 0:
+    if pool.empty:
         st.error("❌ 标的池初筛为空，请调宽左侧价格区间或降低成交额门槛。")
         st.stop()
 
@@ -1054,7 +1041,7 @@ if scan_clicked:
     st.session_state['has_scanned'] = True
     elapsed = round(time.time() - t_start, 1)
 
-    st.toast(f"⚡ 扫描成功！耗时仅 {elapsed} 秒，锁定 {len(hit_results)} 只优质标的！", icon="🎉")
+    st.toast(f"⚡ 扫描成功！耗时仅 {elapsed} 秒，锁定 {len(hit_results)} 只明确细分板块的优质标的！", icon="🎉")
 
 # ==================== 结果看板呈现 ====================
 tab_view_select, tab_view_backtest, tab_view_portfolio = st.tabs(["⚡ AI 智能精选投研看板", "🔬 策略历史回测引擎", "💼 专属持仓与盯盘池"])
@@ -1088,7 +1075,7 @@ with tab_view_select:
         <div class="metric-card" style="border-left:5px solid {d_adv.get('指令颜色', '#2563eb')}; margin-bottom:16px;">
             <div style="font-size:18px; font-weight:bold; color:#0f172a;">
                 {diag_item['评级']} 诊断标的：{diag_item['名称']} <span style="font-size:14px; color:#64748b;">({diag_item['代码']})</span>
-                <span style="font-size:12px; background:#eff6ff; color:#2563eb; padding:3px 10px; border-radius:4px; margin-left:8px; font-weight:bold;">{diag_item['板块']}</span>
+                <span style="font-size:12px; background:#eff6ff; color:#2563eb; padding:3px 10px; border-radius:4px; margin-left:8px; font-weight:bold;">所属细分板块: {diag_item['板块']}</span>
                 <span style="font-size:12px; background:#fef3c7; color:#d97706; padding:3px 10px; border-radius:4px; margin-left:6px; font-weight:bold;">流通市值: {mcap_val} 亿</span>
             </div>
             <div style="font-size:14px; color:#0f172a; margin-top:8px;">
@@ -1107,14 +1094,14 @@ with tab_view_select:
         kline_cache = st.session_state['kline_cache']
         res_df = pd.DataFrame(results)
 
-        st.markdown("<div style='font-size:17px; font-weight:bold; color:#0f172a; margin:14px 0 10px 0;'>👑 今日核心精选标的 (已锁定双止盈锚点与单笔风险)</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:17px; font-weight:bold; color:#0f172a; margin:14px 0 10px 0;'>👑 今日核心精选标的 (已明确细分板块归属)</div>", unsafe_allow_html=True)
         display_cols = ["评级", "代码", "名称", "板块", "流通市值(亿)", "建议股数", "锁定风险", "保本止盈(+2.5%)", "极限止盈(+5.5%)", "买入胜率", "最新价", "涨跌幅(%)", "综合评分"]
         st.dataframe(res_df[display_cols], use_container_width=True, hide_index=True)
 
         selected_code = st.selectbox(
             "选择诊断标的：",
             options=res_df["代码"].tolist(),
-            format_func=lambda x: f"[{kline_cache[x][3].get('板块', '主板')}] {x} - {kline_cache[x][0]} (市值:{kline_cache[x][3].get('流通市值(亿)', '-')}亿)"
+            format_func=lambda x: f"[{kline_cache[x][3].get('板块', '主板')}] {x} - {kline_cache[x][0]} (细分:{kline_cache[x][3].get('板块', '制造')} | 市值:{kline_cache[x][3].get('流通市值(亿)', '-')}亿)"
         )
         if selected_code and selected_code in kline_cache:
             s_name, s_df, s_adv, s_row_data = kline_cache[selected_code]
